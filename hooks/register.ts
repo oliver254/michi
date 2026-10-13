@@ -1,42 +1,89 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, TextProps } from 'claude-code'
+import type { EngineInterface, Register, TextProps } from 'claude-code'
 
-import type { Statut } from '../types'
+import type { Status } from '../types'
 import {
-  GLYPHES,
-  PLAN_VIDE,
-  ajouterTache,
-  composerBande,
-  composerEnTete,
-  composerListe,
-  extraireTitre,
-  modifierTache,
-  remplacerTaches,
-  tronquer,
-  validerPlan,
+  EMPTY_PLAN,
+  GLYPHS,
+  addTask,
+  applyLedger,
+  approvePlan,
+  composeBand,
+  composeHeader,
+  composeList,
+  extractTitle,
+  isPlanDocument,
+  locateLedger,
+  parseLedger,
+  parsePlanDocument,
+  replaceTasks,
+  trackDocument,
+  truncate,
+  updateTask,
 } from './plan'
-import type { Ton } from './plan'
+import type { Tone } from './plan'
 
 /** Identifiant du panneau que la commande /michi ouvre. */
-const PANNEAU = 'michi'
+const PANE_ID = 'michi'
 
 // Le plan vit dans `$.state` : il survit ainsi aux rechargements du module, ce qu'une variable ne fait pas.
 // `plugin` et `key` restent des littéraux : `claude plugin validate` les lit dans le source.
-const plan = atom({ plugin: 'michi', key: 'plan' } as const, PLAN_VIDE)
+const plan = atom({ plugin: 'michi', key: 'plan' } as const, EMPTY_PLAN)
 
 /** Style de chaque morceau de la bande : uniquement des props que `Text` accepte. */
-const STYLES_BANDE: Record<Ton, TextProps> = {
-  titre: { bold: true },
-  discret: { dimColor: true },
-  fait: { color: 'success' },
-  actif: { color: 'yellow', bold: true },
+const BAND_STYLES: Record<Tone, TextProps> = {
+  title: { bold: true },
+  muted: { dimColor: true },
+  done: { color: 'success' },
+  active: { color: 'yellow', bold: true },
 }
 
 /** Style d'une ligne du panneau selon le statut de l'étape. */
-const STYLES_ETAPE: Record<Statut, TextProps> = {
+const STEP_STYLES: Record<Status, TextProps> = {
   completed: { dimColor: true },
   in_progress: { color: 'yellow', bold: true },
   pending: {},
+}
+
+/** Lit un fichier ; `null` s'il manque ou ne peut pas être lu. */
+async function readFile($: EngineInterface, path: string | null): Promise<string | null> {
+  if (path === null) {
+    return null
+  }
+
+  try {
+    return await $.fs.read(path)
+  } catch {
+    return null
+  }
+}
+
+/** Prend pour jauge le plan Superpowers dont la session vient de toucher le document. */
+async function track($: EngineInterface, path: string): Promise<void> {
+  const document = parsePlanDocument(await readFile($, path))
+
+  if (document === null) {
+    return
+  }
+
+  const ledger = parseLedger(await readFile($, locateLedger(path)))
+
+  await update($, plan, current => trackDocument(current, path, document, ledger))
+}
+
+/** Relit le registre du plan Superpowers suivi, s'il y en a un, et n'écrit l'état que s'il a bougé. */
+async function refresh($: EngineInterface): Promise<void> {
+  const current = await read($, plan)
+
+  if (current.document === null) {
+    return
+  }
+
+  const ledger = parseLedger(await readFile($, locateLedger(current.document.path)))
+
+  if (ledger !== null && applyLedger(current, ledger) !== current) {
+    await update($, plan, latest => applyLedger(latest, ledger))
+  }
 }
 
 export const register: Register = on => {
@@ -59,7 +106,7 @@ export const register: Register = on => {
   // le plan affiché n'est plus le sien. `$.state` y est déjà remis à zéro par le moteur ; on l'écrit
   // quand même, pour ne pas dépendre de ce détail.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
-    await update($, plan, () => PLAN_VIDE)
+    await update($, plan, () => EMPTY_PLAN)
 
     return next(e)
   })
@@ -73,7 +120,7 @@ export const register: Register = on => {
     const ran = await next(e)
 
     if (e.agentId === undefined && ran.deny === undefined && ran.isError !== true) {
-      await update($, plan, courant => remplacerTaches(courant, e.todos))
+      await update($, plan, current => replaceTasks(current, e.todos))
     }
 
     return ran
@@ -87,8 +134,8 @@ export const register: Register = on => {
       const id = ran.result?.task?.id
 
       if (typeof id === 'string') {
-        await update($, plan, courant =>
-          ajouterTache(courant, { id, sujet: e.subject, formeActive: e.activeForm }),
+        await update($, plan, current =>
+          addTask(current, { id, subject: e.subject, activeForm: e.activeForm }),
         )
       }
     }
@@ -107,12 +154,12 @@ export const register: Register = on => {
       ran.isError !== true &&
       ran.result?.success !== false
     ) {
-      await update($, plan, courant =>
-        modifierTache(courant, {
+      await update($, plan, current =>
+        updateTask(current, {
           id: e.taskId,
-          statut: e.status,
-          sujet: e.subject,
-          formeActive: e.activeForm,
+          status: e.status,
+          subject: e.subject,
+          activeForm: e.activeForm,
         }),
       )
     }
@@ -126,9 +173,30 @@ export const register: Register = on => {
     const ran = await next(e)
 
     if (e.agentId === undefined && ran.deny === undefined && ran.isError !== true) {
-      const titre = extraireTitre(ran.result?.plan)
+      const title = extractTitle(ran.result?.plan)
 
-      await update($, plan, courant => validerPlan(courant, titre))
+      await update($, plan, current => approvePlan(current, title))
+    }
+
+    return ran
+  })
+
+  // --- Plans Superpowers -------------------------------------------------
+  // Un plan Superpowers ne passe pas par le mode plan : c'est un document, et son avancement
+  // s'écrit dans un registre. Quand la session lit, écrit ou modifie ce document, sa jauge devient
+  // celle de ce plan. Ensuite, toute commande ou modification de fichier de la session a pu faire
+  // avancer le registre : on le relit. Les appels des subagents (exécutants, relecteurs) ne comptent pas.
+  on('tool.call', { tool: ['Read', 'Write', 'Edit', 'Bash'] }, async ($, e, next) => {
+    const ran = await next(e)
+
+    if (e.agentId !== undefined || ran.deny !== undefined || ran.isError === true) {
+      return ran
+    }
+
+    if (e.tool !== 'Bash' && isPlanDocument(e.file_path)) {
+      await track($, e.file_path)
+    } else if (e.tool !== 'Read') {
+      await refresh($)
     }
 
     return ran
@@ -138,7 +206,7 @@ export const register: Register = on => {
 
   // La bande, sur une ligne. Lire le plan ici abonne le dessin : chaque écriture le redessine.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const segments = composerBande(await read($, plan), e.props.bodyColumns)
+    const segments = composeBand(await read($, plan), e.props.bodyColumns)
 
     // Pas de plan, ou une enquête occupe la bande : on laisse la place aux autres mods et au moteur.
     if (segments === null || e.props.hasSurvey) {
@@ -150,11 +218,11 @@ export const register: Register = on => {
     return Box({
       flexDirection: 'column',
       children: [
-        // `composerBande` a déjà coupé le libellé à la largeur ; `wrap` n'est qu'un filet de sécurité.
+        // `composeBand` a déjà coupé le libellé à la largeur ; `wrap` n'est qu'un filet de sécurité.
         Text({
           wrap: 'truncate-end',
           children: segments.map(segment =>
-            Text({ ...STYLES_BANDE[segment.ton], children: segment.texte }),
+            Text({ ...BAND_STYLES[segment.tone], children: segment.text }),
           ),
         }),
         // Ce que dessinent les mods suivants (et le moteur) reste affiché sous notre ligne.
@@ -165,18 +233,18 @@ export const register: Register = on => {
 
   // /michi : ouvre le panneau. Là où aucune surface n'en place, la liste part en texte.
   on('command.run', { command: 'michi' }, async $ => {
-    const ouverture = await $.ui.open({ id: PANNEAU, title: 'Plan' })
+    const opened = await $.ui.open({ id: PANE_ID, title: 'Plan' })
 
-    return ouverture.isPlaced ? {} : { text: composerListe(await read($, plan)) }
+    return opened.isPlaced ? {} : { text: composeList(await read($, plan)) }
   })
 
   // Le panneau : la liste complète, une ligne par étape.
-  on('ui.render', { component: 'Pane', requestId: PANNEAU }, async ($, e) => {
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const courant = await read($, plan)
-    const colonnes = e.props.bodyColumns
+    const current = await read($, plan)
+    const columns = e.props.bodyColumns
 
-    if (courant.etapes.length === 0) {
+    if (current.steps.length === 0) {
       return Box({
         flexDirection: 'column',
         children: Text({ dimColor: true, children: 'Aucun plan en cours.' }),
@@ -186,12 +254,12 @@ export const register: Register = on => {
     return Box({
       flexDirection: 'column',
       children: [
-        Text({ bold: true, wrap: 'truncate-end', children: tronquer(composerEnTete(courant), colonnes) }),
-        ...courant.etapes.map(etape =>
+        Text({ bold: true, wrap: 'truncate-end', children: truncate(composeHeader(current), columns) }),
+        ...current.steps.map(step =>
           Text({
-            ...STYLES_ETAPE[etape.statut],
+            ...STEP_STYLES[step.status],
             wrap: 'truncate-end',
-            children: tronquer(`${GLYPHES[etape.statut]} ${etape.sujet}`, colonnes),
+            children: truncate(`${GLYPHS[step.status]} ${step.subject}`, columns),
           }),
         ),
       ],

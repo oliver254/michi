@@ -9,7 +9,7 @@
 
 |              |                                            |
 | ------------ | ------------------------------------------ |
-| Version      | 0.1.0                                      |
+| Version      | 0.2.0                                      |
 | Claude Code  | 2.1.287 ou plus récent                     |
 | Surfaces     | terminal, app desktop (onglet Code)        |
 | Dépendances  | aucune                                     |
@@ -33,6 +33,9 @@
   immédiatement, même pendant que Claude travaille.
 - **Suivi automatique** : le mod lit les outils de plan de Claude Code (`TodoWrite`, `TaskCreate`,
   `TaskUpdate`, `ExitPlanMode`). Rien à saisir, rien à configurer.
+- **Plans Superpowers** : quand la session ouvre un plan écrit par
+  [Superpowers](https://github.com/obra/superpowers), la jauge devient celle de ce plan, avec ses
+  tâches et l'avancement consigné dans son registre.
 - **Discret** : rien n'est affiché tant qu'il n'y a pas de plan, la ligne s'adapte à la largeur
   disponible, et ce que dessinent les autres mods reste visible.
 - **Fiable** : seuls comptent les appels qui ont réellement abouti, et seulement ceux de la session
@@ -140,6 +143,23 @@ encore, la barre s'efface, puis le titre.
 Les étapes terminées sont estompées, l'étape en cours est en gras et en jaune. Le panneau se met à
 jour tout seul ; il se ferme avec sa croix ou `Ctrl+X` puis `X`.
 
+### Suivre un plan Superpowers
+
+Rien à faire de plus : dès que la session lit, écrit ou modifie un document
+`docs/superpowers/plans/<nom>.md` (ce que font les skills `writing-plans`, `executing-plans` et
+`subagent-driven-development`), la bande et le panneau montrent ce plan.
+
+```text
+◆ T3 — Favoris, filtres, fraîcheur · étape 21/50 · ▰▰▰▰▰▱▱▱▱▱ · ▶ F4 — Le filtre appliqué
+```
+
+- Le **titre** est celui du document, sans la mention « Implementation Plan » ou « plan d'implémentation ».
+- Les **étapes** sont les tâches du plan (`### Task 3: …`, `## Task F10a : …`, `### Tâche 1 — …`).
+  Un identifiant qui n'est pas un simple numéro reste affiché devant le nom.
+- Une tâche est **terminée** quand le registre du plan le dit (`Task F4: complete`) ou que toutes ses
+  cases sont cochées ; elle est **en cours** quand le registre en parle sans la clore, ou qu'une partie
+  de ses cases est cochée.
+
 ## Fonctionnement
 
 ### Ce que le mod écoute
@@ -158,6 +178,23 @@ Chaque appel est d'abord exécuté normalement. Le mod n'en retient l'effet qu'e
 - pour `TaskUpdate`, l'outil n'a pas répondu que la tâche est inconnue.
 
 Le mod ne modifie jamais un appel ni son résultat : Claude lit exactement ce qu'il lirait sans lui.
+
+### Plans Superpowers
+
+Un plan Superpowers ne passe pas par le mode plan : c'est un document Markdown, et son avancement
+s'écrit dans un registre, `.superpowers/sdd/<nom>/progress.md`, que l'exécuteur complète tâche après
+tâche. Le mod s'appuie sur ces deux fichiers :
+
+| Ce que fait la session principale                         | Ce que fait le mod                                         |
+| --------------------------------------------------------- | ---------------------------------------------------------- |
+| Elle lit, écrit ou modifie le document d'un plan          | Il lit le document et son registre, et en tire la jauge.   |
+| Elle lance une commande ou modifie un fichier             | Il relit le registre du plan suivi, s'il y en a un.        |
+
+Tant que le plan tient son registre, les tâches de la session (`TaskCreate`, `TodoWrite`) ne
+modifient plus la jauge : c'est le plan qui fait foi. Sans registre ni case cochée, les tâches du
+document ne sont qu'un aperçu, que les tâches de la session remplacent en gardant le titre.
+
+Une tâche vue terminée le reste, même quand l'exécuteur supprime le registre à la fin du plan.
 
 ### Quand un plan en remplace un autre
 
@@ -178,11 +215,15 @@ Le plan est gardé dans l'état de session de Claude Code (`$.state`) :
 
 ## Ce que le mod touche
 
-Le mod n'appelle que quatre fonctions de l'API des mods : `$.command.register`, `$.state`
-(lecture et écriture de sa seule clé `michi.plan`), `$.ui.open` et `$.ui.resolve`.
+Le mod n'appelle que cinq fonctions de l'API des mods : `$.command.register`, `$.state`
+(lecture et écriture de sa seule clé `michi.plan`), `$.ui.open`, `$.ui.resolve` et `$.fs.read`.
 
-Il ne lit ni n'écrit aucun fichier, ne lance aucun processus, ne fait aucun appel réseau et
-n'interroge aucun modèle. Des appels d'outils, il ne voit que ceux des quatre outils de plan.
+- **Fichiers lus** : uniquement le document du plan Superpowers que la session vient d'ouvrir, et son
+  registre. Sans plan Superpowers, aucun fichier n'est lu.
+- **Appels d'outils vus** : les quatre outils de plan, et `Read`, `Write`, `Edit` et `Bash`. De ces
+  quatre derniers, le mod ne retient rien : il regarde seulement si le fichier touché est un
+  document de plan, et s'en sert comme signal pour relire le registre.
+- **Jamais** : écrire un fichier, lancer un processus, appeler le réseau ou interroger un modèle.
 
 Vous pouvez le vérifier sans lancer le mod : les lignes `hooks:` et `calls:` de la commande
 ci-dessous listent tout ce qu'il écoute et tout ce qu'il appelle.
@@ -223,9 +264,10 @@ claude plugin test .
 
 Les tests couvrent la création du plan, le passage d'une tâche en cours puis terminée, la fin du
 plan, l'absence de plan, le rendu de la bande et du panneau sur `terminal` et `desktop`, les appels
-refusés ou en erreur, les subagents, la troncature et la remise à zéro.
+refusés ou en erreur, les subagents, la troncature, la remise à zéro et le suivi d'un plan
+Superpowers (document, registre, cases cochées).
 
-Conventions du code : vocabulaire du domaine en français, termes techniques en anglais ; aucune
+Conventions du code : identifiants en anglais, commentaires et textes affichés en français ; aucune
 dépendance externe ; tout ce qui se calcule sans le moteur vit dans `hooks/plan.ts`.
 
 ## Dépannage
@@ -252,11 +294,16 @@ on('tool.call', { tool: /^(TodoWrite|Task|ExitPlanMode)/ }, async ($, e, next) =
 
 ## Limites connues
 
-- **Version 0.1.0.** Le mod est validé par ses tests automatisés avec Claude Code 2.1.295 ; son rendu
+- **Version 0.2.0.** Le mod est validé par ses tests automatisés avec Claude Code 2.1.296 ; son rendu
   n'a pas encore été contrôlé visuellement dans une session réelle.
 - **Tâches antérieures au mod.** Les tâches créées avant son chargement, ou reprises par `/resume`,
   lui sont inconnues : la bande reparaît à la prochaine création de tâche.
-- **Titre.** Il ne vient que d'un plan validé en mode plan ; sans cela, la bande affiche `Plan`.
+- **Titre.** Il vient d'un plan validé en mode plan ou d'un document Superpowers ; sans cela, la
+  bande affiche `Plan`.
+- **Plans Superpowers.** Seul l'emplacement par défaut `docs/superpowers/plans/` est reconnu. Le suivi
+  commence quand la session touche le document du plan : lire seulement le registre ne suffit pas.
+  Pendant qu'un exécutant travaille sans que le registre parle encore de sa tâche, la bande annonce
+  cette tâche avec `○` et non `▶`.
 - **Surfaces.** La bande et le panneau se dessinent dans le terminal et l'app desktop. Ailleurs
   (extension VS Code, `claude -p`, SDK), le mod suit le plan mais n'affiche rien.
 - **Largeur des caractères.** Elle est estimée sans table Unicode complète : deux cellules pour le

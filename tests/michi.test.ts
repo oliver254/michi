@@ -2,23 +2,23 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderPropsOf } from 'claude-code'
 
-import { largeur } from '../hooks/plan'
+import { displayWidth } from '../hooks/plan'
 
 // Tests du mod à travers le moteur : on déclenche les événements comme Claude Code le ferait,
 // et on lit ce que les hooks ont dessiné. Aucune session, aucun outil réel.
 
 /** Ce que le « moteur » du test dessine dans la bande quand le mod lui passe la main. */
-const DESSIN_MOTEUR = 'dessin du moteur'
+const ENGINE_DRAWING = 'engine drawing'
 
 /** Le plan d'exemple : intitulé et forme active de chaque tâche. */
-const TACHES = [
+const TASKS = [
   ['Écrire le parseur', 'Écriture du parseur'],
   ['Brancher la CLI', 'Branchement de la CLI'],
   ['Documenter', 'Rédaction de la documentation'],
 ] as const
 
 /** Ce que Claude Code passe à un hook `ui.render` pour la bande, hors surface. */
-const BANDE = {
+const BAND = {
   plugin: 'michi',
   component: 'AbovePrompt',
   viewport: { columns: 100, rows: 30 },
@@ -33,7 +33,7 @@ const BANDE = {
 } as const
 
 /** Idem pour le panneau ouvert par /michi. */
-const PANNEAU = {
+const PANE = {
   plugin: 'michi',
   component: 'Pane',
   requestId: 'michi',
@@ -49,36 +49,40 @@ const PANNEAU = {
 } as const
 
 /**
- * Répond à la place de Claude Code : résultats d'outils, dessin de la bande, commandes, panneaux.
- * Renvoie de quoi régler ces réponses et relire ce que le mod a demandé.
+ * Répond à la place de Claude Code : résultats d'outils, fichiers, dessin de la bande, commandes,
+ * panneaux. Renvoie de quoi régler ces réponses et relire ce que le mod a demandé.
  * À appeler avant le premier appel sur `$` : le kit refuse un `on` tardif.
  */
-function simulerMoteur(on: On) {
-  const moteur = {
+function fakeEngine(on: On) {
+  const engine = {
     /** Les prochains appels d'outil sont refusés. */
-    refuse: false,
+    denies: false,
     /** Les prochains appels d'outil échouent. */
-    echoue: false,
+    fails: false,
     /** TaskUpdate répond « tâche inconnue », sans erreur. */
-    tacheInconnue: false,
+    unknownTask: false,
     /** Le texte du plan qu'ExitPlanMode renvoie une fois accepté. */
-    planValide: "# Migrer l'authentification\n\n1. Écrire le parseur\n2. Brancher la CLI" as string | null,
+    approvedPlan: "# Migrer l'authentification\n\n1. Écrire le parseur\n2. Brancher la CLI" as string | null,
     /** `$.ui.open` place le panneau. */
-    placePanneau: true,
+    placesPane: true,
     /** Les commandes que le mod a déclarées. */
-    commandes: [] as unknown[],
+    commands: [] as unknown[],
     /** Les panneaux que le mod a ouverts. */
-    panneaux: [] as unknown[],
+    panes: [] as unknown[],
+    /** Les fichiers que le mod peut lire, par fin de chemin (barres obliques). */
+    files: new Map<string, string>(),
+    /** Les chemins que le mod a demandé à lire. */
+    reads: [] as string[],
   }
-  let dernierId = 0
+  let lastId = 0
 
   on('tool.call', (_$, e) => {
-    if (moteur.refuse) {
-      return { deny: 'refusé par le test' }
+    if (engine.denies) {
+      return { deny: 'denied by the test' }
     }
 
-    if (moteur.echoue) {
-      return { isError: true, result: 'échec simulé', text: 'échec simulé' }
+    if (engine.fails) {
+      return { isError: true, result: 'simulated failure', text: 'simulated failure' }
     }
 
     // Les résultats ont la forme que les types de cette version donnent à chaque outil.
@@ -87,58 +91,67 @@ function simulerMoteur(on: On) {
     }
 
     if (e.tool === 'TaskCreate') {
-      dernierId += 1
+      lastId += 1
 
-      return { result: { task: { id: String(dernierId), subject: e.subject } } }
+      return { result: { task: { id: String(lastId), subject: e.subject } } }
     }
 
     if (e.tool === 'TaskUpdate') {
-      return moteur.tacheInconnue
+      return engine.unknownTask
         ? { result: { success: false, taskId: e.taskId, updatedFields: [], error: 'Task not found' } }
         : { result: { success: true, taskId: e.taskId, updatedFields: ['status'] } }
     }
 
     if (e.tool === 'ExitPlanMode') {
-      return { result: { plan: moteur.planValide, isAgent: false } }
+      return { result: { plan: engine.approvedPlan, isAgent: false } }
     }
 
     return { result: 'ok' }
   })
-  on('ui.render', () => ({ type: 'Text', props: {}, children: [DESSIN_MOTEUR] }))
-  on('session.start', () => ({ cwd: '/travail' }))
+  on('fs.read', (_$, e) => {
+    // Le chemin arrive absolu, écrit à la façon du système : on compare sa fin.
+    const path = e.path.replace(/\\/g, '/')
+    const found = [...engine.files].find(([suffix]) => path.endsWith(suffix))
+
+    engine.reads.push(path)
+
+    return found === undefined ? { deny: `missing file: ${path}` } : { value: found[1] }
+  })
+  on('ui.render', () => ({ type: 'Text', props: {}, children: [ENGINE_DRAWING] }))
+  on('session.start', () => ({ cwd: '/work' }))
   on('classic.SessionStart', () => ({}))
   on('command.register', (_$, e) => {
-    moteur.commandes.push(e)
+    engine.commands.push(e)
 
     return { value: { command: e.name } }
   })
   on('ui.open', (_$, e) => {
-    moteur.panneaux.push(e)
+    engine.panes.push(e)
 
     return {
-      value: moteur.placePanneau
+      value: engine.placesPane
         ? { isPlaced: true }
-        : { isPlaced: false, reason: 'aucune surface ne place de panneau' },
+        : { isPlaced: false, reason: 'no surface places a pane' },
     }
   })
 
-  return moteur
+  return engine
 }
 
 /** Crée le plan d'exemple, une tâche par appel à TaskCreate (identifiants « 1 », « 2 », « 3 »). */
-async function creerPlan($: Engine) {
-  for (const [subject, activeForm] of TACHES) {
+async function createPlan($: Engine) {
+  for (const [subject, activeForm] of TASKS) {
     await $.tool.call({ tool: 'TaskCreate', subject, description: subject, activeForm })
   }
 }
 
 /** Change le statut d'une tâche, comme Claude le ferait avec TaskUpdate. */
-function passer($: Engine, taskId: string, status: 'in_progress' | 'completed') {
+function setStatus($: Engine, taskId: string, status: 'in_progress' | 'completed') {
   return $.tool.call({ tool: 'TaskUpdate', taskId, status })
 }
 
 /** Tape /michi au prompt d'un terminal plein écran. */
-function lancerMichi($: Engine) {
+function runMichi($: Engine) {
   return $.command.run({
     command: 'michi',
     args: '',
@@ -148,103 +161,103 @@ function lancerMichi($: Engine) {
 }
 
 /** Dessine la bande sur le terminal et renvoie la ligne du mod (`undefined` s'il n'a rien dessiné). */
-async function lireBande($: Engine, props: Partial<RenderPropsOf['AbovePrompt']> = {}) {
-  const ui = await $.ui.mount({ ...BANDE, surface: 'terminal', props: { ...BANDE.props, ...props } })
-  const ligne = await ui.find({ type: 'Text', text: '◆' })
-  const moteur = await ui.find({ type: 'Text', text: DESSIN_MOTEUR })
+async function readBand($: Engine, props: Partial<RenderPropsOf['AbovePrompt']> = {}) {
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, ...props } })
+  const line = await ui.find({ type: 'Text', text: '◆' })
+  const engineDrawing = await ui.find({ type: 'Text', text: ENGINE_DRAWING })
 
   await ui.unmount()
 
-  return { ligne: ligne?.text, aDessinMoteur: moteur !== undefined }
+  return { line: line?.text, hasEngineDrawing: engineDrawing !== undefined }
 }
 
 // --- Capture du plan et bande --------------------------------------------
 
 test('sans plan, la bande est laissée au moteur', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
 
-  expect(await lireBande($)).toEqual({ ligne: undefined, aDessinMoteur: true })
+  expect(await readBand($)).toEqual({ line: undefined, hasEngineDrawing: true })
 })
 
 test('plan créé : la bande annonce la première étape à venir', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur')
 })
 
 test('tâche passée en cours : la bande montre sa forme active', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
-  await passer($, '1', 'in_progress')
+  fakeEngine(on)
+  await createPlan($)
+  await setStatus($, '1', 'in_progress')
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 1/3 · ▰▱▱ · ▶ Écriture du parseur')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 1/3 · ▰▱▱ · ▶ Écriture du parseur')
 })
 
 test('tâche terminée : la case reste pleine et la suivante est annoncée', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
-  await passer($, '1', 'in_progress')
-  await passer($, '1', 'completed')
+  fakeEngine(on)
+  await createPlan($)
+  await setStatus($, '1', 'in_progress')
+  await setStatus($, '1', 'completed')
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 1/3 · ▰▱▱ · ○ Brancher la CLI')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 1/3 · ▰▱▱ · ○ Brancher la CLI')
 })
 
 test('plan terminé : toutes les cases sont pleines', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
   for (const id of ['1', '2', '3']) {
-    await passer($, id, 'completed')
+    await setStatus($, id, 'completed')
   }
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 3/3 · ▰▰▰ · ✔ terminé')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 3/3 · ▰▰▰ · ✔ terminé')
 })
 
 test('la bande déjà affichée suit le plan sans être redemandée', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...BANDE, surface })
-    const avant = (await ui.find({ type: 'Text', text: '◆' }))?.text
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const before = (await ui.find({ type: 'Text', text: '◆' }))?.text
 
     // L'écriture dans `$.state` suffit à redessiner : le test ne remonte rien.
-    await passer($, '2', 'in_progress')
-    const actif = await ui.find({ type: 'Text', text: /^▶ / })
+    await setStatus($, '2', 'in_progress')
+    const active = await ui.find({ type: 'Text', text: /^▶ / })
 
-    expect(avant).toContain('○ ')
-    expect(actif?.text).toBe('▶ Branchement de la CLI')
-    expect(actif?.props).toEqual({ color: 'yellow', bold: true })
+    expect(before).toContain('○ ')
+    expect(active?.text).toBe('▶ Branchement de la CLI')
+    expect(active?.props).toEqual({ color: 'yellow', bold: true })
 
-    await passer($, '2', 'completed')
+    await setStatus($, '2', 'completed')
     await ui.unmount()
   }
 })
 
 test('ExitPlanMode accepté donne son titre au plan', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
   await $.tool.call({ tool: 'ExitPlanMode' })
-  await creerPlan($)
+  await createPlan($)
 
-  expect((await lireBande($)).ligne).toBe(
+  expect((await readBand($)).line).toBe(
     "◆ Migrer l'authentification · étape 0/3 · ▱▱▱ · ○ Écrire le parseur",
   )
 })
 
 test('ExitPlanMode refusé par l’utilisateur ne change pas le titre', async ($, on) => {
-  const moteur = simulerMoteur(on)
+  const engine = fakeEngine(on)
 
-  moteur.echoue = true
+  engine.fails = true
   await $.tool.call({ tool: 'ExitPlanMode' })
-  moteur.echoue = false
-  await creerPlan($)
+  engine.fails = false
+  await createPlan($)
 
-  expect((await lireBande($)).ligne).toStartWith('◆ Plan · ')
+  expect((await readBand($)).line).toStartWith('◆ Plan · ')
 })
 
 test('TodoWrite remplace la liste à chaque appel', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
   await $.tool.call({
     tool: 'TodoWrite',
     todos: [
@@ -255,35 +268,35 @@ test('TodoWrite remplace la liste à chaque appel', async ($, on) => {
     ],
   })
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug')
 })
 
 test('un appel refusé ou en échec ne change pas le plan', async ($, on) => {
-  const moteur = simulerMoteur(on)
+  const engine = fakeEngine(on)
 
-  await creerPlan($)
-  const attendu = '◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur'
+  await createPlan($)
+  const expected = '◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur'
 
-  moteur.refuse = true
-  await passer($, '1', 'in_progress')
+  engine.denies = true
+  await setStatus($, '1', 'in_progress')
   await $.tool.call({ tool: 'TaskCreate', subject: 'En trop', description: 'En trop' })
-  expect((await lireBande($)).ligne).toBe(attendu)
+  expect((await readBand($)).line).toBe(expected)
 
-  moteur.refuse = false
-  moteur.echoue = true
-  await passer($, '1', 'in_progress')
+  engine.denies = false
+  engine.fails = true
+  await setStatus($, '1', 'in_progress')
   await $.tool.call({ tool: 'TodoWrite', todos: [] })
-  expect((await lireBande($)).ligne).toBe(attendu)
+  expect((await readBand($)).line).toBe(expected)
 
-  moteur.echoue = false
-  moteur.tacheInconnue = true
-  await passer($, '1', 'completed')
-  expect((await lireBande($)).ligne).toBe(attendu)
+  engine.fails = false
+  engine.unknownTask = true
+  await setStatus($, '1', 'completed')
+  expect((await readBand($)).line).toBe(expected)
 })
 
 test('les appels venant d’un subagent sont ignorés', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
   // Le type de `$.tool.call` ne déclare pas `agentId`, mais le kit le transmet aux hooks
   // comme le fait la boucle d'un subagent : d'où le `as never`.
@@ -292,109 +305,268 @@ test('les appels venant d’un subagent sont ignorés', async ($, on) => {
   await $.tool.call({ tool: 'TodoWrite', todos: [], agentId: 'agent-7' } as never)
   await $.tool.call({ tool: 'ExitPlanMode', agentId: 'agent-7' } as never)
 
-  expect((await lireBande($)).ligne).toBe('◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 0/3 · ▱▱▱ · ○ Écrire le parseur')
 })
 
 test('le libellé est coupé à la largeur de la bande', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
   await $.tool.call({
     tool: 'TaskCreate',
     subject: 'Refondre',
     description: 'Refondre',
     activeForm: 'Refonte complète du module de facturation et de tous ses rapports mensuels',
   })
-  await passer($, '1', 'in_progress')
+  await setStatus($, '1', 'in_progress')
 
-  const { ligne = '' } = await lireBande($, { bodyColumns: 48 })
+  const { line = '' } = await readBand($, { bodyColumns: 48 })
 
-  expect(largeur(ligne)).toBeLessThanOrEqual(48)
-  expect(ligne).toStartWith('◆ Plan · étape 1/1 · ▰ · ▶ Refonte')
-  expect(ligne).toEndWith('…')
+  expect(displayWidth(line)).toBeLessThanOrEqual(48)
+  expect(line).toStartWith('◆ Plan · étape 1/1 · ▰ · ▶ Refonte')
+  expect(line).toEndWith('…')
 })
 
 test('ce que dessinent les autres mods reste affiché sous la ligne du mod', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
-  const { ligne, aDessinMoteur } = await lireBande($)
+  const { line, hasEngineDrawing } = await readBand($)
 
-  expect(ligne).toBeDefined()
-  expect(aDessinMoteur).toBe(true)
+  expect(line).toBeDefined()
+  expect(hasEngineDrawing).toBe(true)
 })
 
 test('une enquête garde la bande pour elle', async ($, on) => {
-  simulerMoteur(on)
-  await creerPlan($)
+  fakeEngine(on)
+  await createPlan($)
 
-  expect(await lireBande($, { hasSurvey: true })).toEqual({ ligne: undefined, aDessinMoteur: true })
+  expect(await readBand($, { hasSurvey: true })).toEqual({ line: undefined, hasEngineDrawing: true })
+})
+
+// --- Plans Superpowers ---------------------------------------------------
+
+/** Le document d'un plan Superpowers et son registre, là où Superpowers les range. */
+const PLAN_PATH = '/depot/docs/superpowers/plans/2026-10-12-convertisseur.md'
+const PLAN_SUFFIX = 'docs/superpowers/plans/2026-10-12-convertisseur.md'
+const LEDGER_SUFFIX = '.superpowers/sdd/2026-10-12-convertisseur/progress.md'
+
+const SUPERPOWERS_PLAN = [
+  '# Convertisseur de températures Implementation Plan',
+  '',
+  '> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans.',
+  '',
+  '### Task 1: Conversion Celsius vers Fahrenheit',
+  '- [ ] **Step 1: Write the failing test**',
+  '',
+  '### Task 2: Conversion inverse',
+  '- [ ] **Step 1: Write the failing test**',
+  '',
+  '### Task 3: Ligne de commande',
+  '- [ ] **Step 1: Write the failing test**',
+].join('\n')
+
+const OPEN_LEDGER = `# SDD ledger — plan: ${PLAN_SUFFIX}\n`
+
+/** La session lit le document du plan, comme le fait l'exécuteur au démarrage. */
+function readSuperpowersPlan($: Engine) {
+  return $.tool.call({ tool: 'Read', file_path: PLAN_PATH })
+}
+
+test('un plan Superpowers lu par la session donne sa jauge', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  await readSuperpowersPlan($)
+
+  expect((await readBand($, { bodyColumns: 120 })).line).toBe(
+    '◆ Convertisseur de températures · étape 0/3 · ▱▱▱ · ○ Conversion Celsius vers Fahrenheit',
+  )
+})
+
+test('un plan Superpowers que la session vient d’écrire donne aussi sa jauge', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  await $.tool.call({ tool: 'Write', file_path: PLAN_PATH, content: SUPERPOWERS_PLAN })
+
+  expect((await readBand($, { bodyColumns: 120 })).line).toStartWith(
+    '◆ Convertisseur de températures · étape 0/3 · ',
+  )
+})
+
+test('le registre fait avancer la jauge après chaque commande de la session', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, OPEN_LEDGER)
+  await readSuperpowersPlan($)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  expect((await ui.find({ type: 'Text', text: '◆' }))?.text).toContain('étape 0/3 · ▱▱▱ · ')
+
+  // L'exécuteur clôt la tâche 1 et reçoit le rapport de la tâche 2 : deux lignes de plus au registre.
+  engine.files.set(
+    LEDGER_SUFFIX,
+    `${OPEN_LEDGER}Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)\nTask 2: implementer DONE (b7c8d9e)\n`,
+  )
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: conversion"' })
+
+  // La bande déjà affichée suit, sans être redemandée.
+  expect((await ui.find({ type: 'Text', text: '◆' }))?.text).toBe(
+    '◆ Convertisseur de températures · étape 2/3 · ▰▰▱ · ▶ Conversion inverse',
+  )
+  await ui.unmount()
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect((await pane.findAll({ type: 'Text' })).map(line => line.text)).toEqual([
+    '◆ Convertisseur de températures · 1/3',
+    '✔ Conversion Celsius vers Fahrenheit',
+    '▶ Conversion inverse',
+    '○ Ligne de commande',
+  ])
+  await pane.unmount()
+})
+
+test('les tâches de la session n’effacent pas un plan Superpowers qui tient son registre', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, OPEN_LEDGER)
+  await readSuperpowersPlan($)
+  await createPlan($)
+  await setStatus($, '1', 'completed')
+
+  expect((await readBand($, { bodyColumns: 120 })).line).toBe(
+    '◆ Convertisseur de températures · étape 0/3 · ▱▱▱ · ○ Conversion Celsius vers Fahrenheit',
+  )
+})
+
+test('sans registre, les tâches de la session remplacent l’aperçu du plan et gardent son titre', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  await readSuperpowersPlan($)
+  await createPlan($)
+  await setStatus($, '1', 'in_progress')
+
+  expect((await readBand($)).line).toBe(
+    '◆ Convertisseur de températures · étape 1/3 · ▰▱▱ · ▶ Écriture du parseur',
+  )
+})
+
+test('le plan lu par un subagent, ou une lecture en échec, ne change rien', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  await $.tool.call({ tool: 'Read', file_path: PLAN_PATH, agentId: 'agent-7' } as never)
+  engine.fails = true
+  await readSuperpowersPlan($)
+
+  expect((await readBand($)).line).toBeUndefined()
+  expect(engine.reads).toEqual([])
+})
+
+test('le mod ne lit que le document du plan et son registre', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, OPEN_LEDGER)
+
+  // Sans plan Superpowers suivi, aucun fichier n'est lu, quoi que fasse la session.
+  await $.tool.call({ tool: 'Read', file_path: '/depot/README.md' })
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  await $.tool.call({ tool: 'Edit', file_path: '/depot/src/app.ts', old_string: 'a', new_string: 'b' })
+  expect(engine.reads).toEqual([])
+
+  await readSuperpowersPlan($)
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+
+  expect(engine.reads.every(path => path.endsWith(PLAN_SUFFIX) || path.endsWith(LEDGER_SUFFIX))).toBe(true)
+  expect(engine.reads.filter(path => path.endsWith(PLAN_SUFFIX))).toHaveLength(1)
+  expect(engine.reads.filter(path => path.endsWith(LEDGER_SUFFIX))).toHaveLength(2)
 })
 
 // --- Remise à zéro -------------------------------------------------------
 
+test('/clear met fin au suivi d’un plan Superpowers', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, OPEN_LEDGER)
+  await readSuperpowersPlan($)
+  await $.classic.SessionStart({ source: 'clear' })
+  engine.reads.length = 0
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+
+  expect((await readBand($)).line).toBeUndefined()
+  expect(engine.reads).toEqual([])
+})
+
 test('/clear, /resume et /branch remettent le plan à zéro, pas la compaction', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
 
   for (const source of ['clear', 'resume', 'fork'] as const) {
-    await creerPlan($)
-    expect((await lireBande($)).ligne, `avant ${source}`).toBeDefined()
+    await createPlan($)
+    expect((await readBand($)).line, `avant ${source}`).toBeDefined()
 
     await $.classic.SessionStart({ source })
-    expect((await lireBande($)).ligne, `après ${source}`).toBeUndefined()
+    expect((await readBand($)).line, `après ${source}`).toBeUndefined()
   }
 
-  await creerPlan($)
+  await createPlan($)
   await $.classic.SessionStart({ source: 'compact' })
-  expect((await lireBande($)).ligne).toBeDefined()
+  expect((await readBand($)).line).toBeDefined()
 })
 
 // --- Commande et panneau -------------------------------------------------
 
 test('/michi est déclarée immédiate et ouvre le panneau', async ($, on) => {
-  const moteur = simulerMoteur(on)
+  const engine = fakeEngine(on)
 
-  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/travail' })
-  expect(moteur.commandes).toHaveLength(1)
-  expect(moteur.commandes[0]).toMatchObject({ name: 'michi', immediate: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  expect(engine.commands).toHaveLength(1)
+  expect(engine.commands[0]).toMatchObject({ name: 'michi', immediate: true })
 
-  const reponse = await lancerMichi($)
+  const answer = await runMichi($)
 
-  expect(moteur.panneaux).toEqual([expect.objectContaining({ id: 'michi' })])
-  expect(reponse.text).toBeUndefined()
+  expect(engine.panes).toEqual([expect.objectContaining({ id: 'michi' })])
+  expect(answer.text).toBeUndefined()
 })
 
 test('/michi répond en texte là où aucun panneau n’est placé', async ($, on) => {
-  const moteur = simulerMoteur(on)
+  const engine = fakeEngine(on)
 
-  moteur.placePanneau = false
-  await creerPlan($)
-  await passer($, '1', 'completed')
-  await passer($, '2', 'in_progress')
+  engine.placesPane = false
+  await createPlan($)
+  await setStatus($, '1', 'completed')
+  await setStatus($, '2', 'in_progress')
 
-  const reponse = await lancerMichi($)
+  const answer = await runMichi($)
 
-  expect(reponse.text).toBe(
+  expect(answer.text).toBe(
     ['◆ Plan · 1/3', '✔ Écrire le parseur', '▶ Brancher la CLI', '○ Documenter'].join('\n'),
   )
 })
 
 test('le panneau liste les étapes : terminée, en cours, à faire', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
   await $.tool.call({ tool: 'ExitPlanMode' })
-  await creerPlan($)
-  await passer($, '1', 'completed')
-  await passer($, '2', 'in_progress')
+  await createPlan($)
+  await setStatus($, '1', 'completed')
+  await setStatus($, '2', 'in_progress')
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...PANNEAU, surface })
-    const enTete = await ui.find({ type: 'Text', text: '◆' })
-    const terminee = await ui.find({ type: 'Text', text: '✔ Écrire le parseur' })
-    const enCours = await ui.find({ type: 'Text', text: '▶ Brancher la CLI' })
-    const aFaire = await ui.find({ type: 'Text', text: '○ Documenter' })
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const header = await ui.find({ type: 'Text', text: '◆' })
+    const done = await ui.find({ type: 'Text', text: '✔ Écrire le parseur' })
+    const running = await ui.find({ type: 'Text', text: '▶ Brancher la CLI' })
+    const pending = await ui.find({ type: 'Text', text: '○ Documenter' })
 
-    expect(enTete?.text).toBe("◆ Migrer l'authentification · 1/3")
-    expect(terminee?.props).toMatchObject({ dimColor: true })
-    expect(enCours?.props).toMatchObject({ bold: true, color: 'yellow' })
-    expect(aFaire?.props).toEqual({ wrap: 'truncate-end' })
+    expect(header?.text).toBe("◆ Migrer l'authentification · 1/3")
+    expect(done?.props).toMatchObject({ dimColor: true })
+    expect(running?.props).toMatchObject({ bold: true, color: 'yellow' })
+    expect(pending?.props).toEqual({ wrap: 'truncate-end' })
     expect(await ui.findAll({ type: 'Text' })).toHaveLength(4)
 
     await ui.unmount()
@@ -402,12 +574,12 @@ test('le panneau liste les étapes : terminée, en cours, à faire', async ($, o
 })
 
 test('le panneau coupe les intitulés trop longs et dit quand il n’y a pas de plan', async ($, on) => {
-  simulerMoteur(on)
+  fakeEngine(on)
 
-  const vide = await $.ui.mount({ ...PANNEAU, surface: 'terminal' })
+  const empty = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await vide.find({ type: 'Text' }))?.text).toBe('Aucun plan en cours.')
-  await vide.unmount()
+  expect((await empty.find({ type: 'Text' }))?.text).toBe('Aucun plan en cours.')
+  await empty.unmount()
 
   await $.tool.call({
     tool: 'TaskCreate',
@@ -415,10 +587,10 @@ test('le panneau coupe les intitulés trop longs et dit quand il n’y a pas de 
     description: 'x',
   })
 
-  const ui = await $.ui.mount({ ...PANNEAU, surface: 'terminal' })
-  const etape = await ui.find({ type: 'Text', text: '○ ' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const step = await ui.find({ type: 'Text', text: '○ ' })
 
-  expect(largeur(etape?.text ?? '')).toBeLessThanOrEqual(PANNEAU.props.bodyColumns)
-  expect(etape?.text).toEndWith('…')
+  expect(displayWidth(step?.text ?? '')).toBeLessThanOrEqual(PANE.props.bodyColumns)
+  expect(step?.text).toEndWith('…')
   await ui.unmount()
 })
