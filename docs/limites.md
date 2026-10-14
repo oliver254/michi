@@ -13,6 +13,9 @@
   bande affiche `Plan`.
 - **Plans Superpowers.** Seul l'emplacement par défaut `docs/superpowers/plans/` est reconnu. Le suivi
   commence quand la session touche le document du plan : lire seulement le registre ne suffit pas.
+  Pendant que les étapes de la session sont en cours, il faut même qu'elle écrive ou modifie le
+  document : un plan Superpowers exécuté à ce moment-là, sans écrire ni modifier son document, ne
+  prend pas la jauge.
   Pendant qu'un exécutant travaille sans que le registre parle encore de sa tâche, la bande annonce
   cette tâche avec `○` et non `▶`.
 - **Surfaces.** La bande et le panneau se dessinent dans le terminal et l'app desktop. Ailleurs

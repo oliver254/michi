@@ -172,7 +172,7 @@ Le mod reconnaît trois sources, sans réglage :
 
 Après la validation d'un plan en mode plan, la bande apparaît au premier appel de l'outil d'étapes,
 donc quelques instants plus tard. Un plan Superpowers est suivi dès que la session lit, écrit ou
-modifie son document :
+modifie son document (une simple lecture ne le substitue pas aux étapes en cours de la session) :
 
 ```text
 ◆ T3 — Favoris, filtres, fraîcheur · étape 21/50 · ▰▰▰▰▰▱▱▱▱▱ · ▶ F4 — Le filtre appliqué
@@ -186,6 +186,7 @@ Le détail de chaque source, des priorités entre elles et de la durée de vie d
 | Le mod…                 | Concrètement                                                                                                      |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Lit                     | Uniquement le document du plan Superpowers ouvert par la session, et son registre. Sans plan Superpowers, rien.   |
+| Consulte                | La liste des outils de la session, au démarrage et à chaque plan validé, pour savoir si elle a un outil de tâches. |
 | Garde                   | Le plan, dans une seule clé de l'état de session (`michi.plan`). Rien n'est écrit sur disque.                     |
 | Ajoute à ce que Claude lit | Dans une session sans outil de tâches : la description de `mcp__michi__steps`, et une consigne de trois phrases après chaque plan validé. |
 | Ne fait jamais          | Écrire un fichier, lancer un processus, appeler le réseau, interroger un modèle, modifier les arguments ou le résultat d'un outil. |

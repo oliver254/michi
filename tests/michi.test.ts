@@ -607,6 +607,45 @@ test('sans registre, les tâches de la session remplacent l’aperçu du plan et
   )
 })
 
+test('lire un plan Superpowers pendant un plan validé ne lui prend pas la jauge', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  // Un registre laissé par une exécution abandonnée.
+  engine.files.set(LEDGER_SUFFIX, `${OPEN_LEDGER}Task 1: complete (a1b2c3d)\n`)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  await readSuperpowersPlan($)
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug",
+  )
+
+  // Claude peut toujours faire avancer la jauge.
+  const answer = await declareSteps($, [
+    STEPS[0],
+    { ...STEPS[1], status: 'completed' },
+    { ...STEPS[2], status: 'in_progress' },
+    STEPS[3],
+  ])
+
+  expect(answer.result).toContain('2/4')
+})
+
+test('modifier un plan Superpowers qui tient son registre lui donne la jauge, même pendant un plan validé', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, `${OPEN_LEDGER}Task 1: complete (a1b2c3d)\n`)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  await $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: 'a', new_string: 'b' })
+
+  expect((await readBand($, { bodyColumns: 120 })).line).toBe(
+    '◆ Convertisseur de températures · étape 1/3 · ▰▱▱ · ○ Conversion inverse',
+  )
+})
+
 test('le plan lu par un subagent, ou une lecture en échec, ne change rien', async ($, on) => {
   const engine = fakeEngine(on)
 

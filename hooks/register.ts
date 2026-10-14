@@ -23,7 +23,7 @@ import {
   truncate,
   updateTask,
 } from './plan'
-import type { Tone } from './plan'
+import type { Access, Tone } from './plan'
 
 /** Identifiant du panneau que la commande /michi ouvre. */
 const PANE_ID = 'michi'
@@ -104,7 +104,7 @@ async function readFile($: EngineInterface, path: string | null): Promise<string
 }
 
 /** Prend pour jauge le plan Superpowers dont la session vient de toucher le document. */
-async function track($: EngineInterface, path: string): Promise<void> {
+async function track($: EngineInterface, path: string, access: Access): Promise<void> {
   const document = parsePlanDocument(await readFile($, path))
 
   if (document === null) {
@@ -113,7 +113,7 @@ async function track($: EngineInterface, path: string): Promise<void> {
 
   const ledger = parseLedger(await readFile($, locateLedger(path)))
 
-  await update($, plan, current => trackDocument(current, path, document, ledger))
+  await update($, plan, current => trackDocument(current, path, document, ledger, access))
 }
 
 /** Relit le registre du plan Superpowers suivi, s'il y en a un, et n'écrit l'état que s'il a bougé. */
@@ -277,8 +277,9 @@ export const register: Register = on => {
   // --- Plans Superpowers -------------------------------------------------
   // Un plan Superpowers ne passe pas par le mode plan : c'est un document, et son avancement
   // s'écrit dans un registre. Quand la session lit, écrit ou modifie ce document, sa jauge devient
-  // celle de ce plan. Ensuite, toute commande ou modification de fichier de la session a pu faire
-  // avancer le registre : on le relit. Les appels des subagents (exécutants, relecteurs) ne comptent pas.
+  // celle de ce plan ; une simple lecture ne la prend pas à un plan de session en cours. Ensuite,
+  // toute commande ou modification de fichier de la session a pu faire avancer le registre : on le
+  // relit. Les appels des subagents (exécutants, relecteurs) ne comptent pas.
   on('tool.call', { tool: ['Read', 'Write', 'Edit', 'Bash'] }, async ($, e, next) => {
     const ran = await next(e)
 
@@ -287,7 +288,7 @@ export const register: Register = on => {
     }
 
     if (e.tool !== 'Bash' && isPlanDocument(e.file_path)) {
-      await track($, e.file_path)
+      await track($, e.file_path, e.tool === 'Read' ? 'read' : 'write')
     } else if (e.tool !== 'Read') {
       await refresh($)
     }

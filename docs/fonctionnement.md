@@ -33,16 +33,16 @@ deux choses à ce que Claude lit, décrites ci-dessous.
 ## Mode plan : l'outil d'étapes
 
 Un plan du mode plan est un texte libre, et aucun outil de Claude Code ne dit où en est son
-exécution. Les versions récentes n'offrent plus non plus d'outil de tâches : ni `TaskCreate` ni
-`TodoWrite` dans les sessions observées avec Claude Code 2.1.295 et 2.1.296. Sans rien d'autre, un
-plan validé ne donnerait donc qu'un titre.
+exécution. Et les sessions observées n'offraient aucun outil de tâches : ni `TaskCreate` ni
+`TodoWrite`, dans l'app desktop (Claude Code 2.1.295) comme avec `claude -p` (2.1.296). Sans rien
+d'autre, un plan validé n'y donnerait donc qu'un titre.
 
 Le mod comble ce manque, et seulement là où il existe :
 
 | Moment                        | Ce que fait le mod                                                                                                                           |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Démarrage de la session       | Si la session n'a ni `TaskCreate` ni `TodoWrite`, il déclare son outil, `mcp__michi__steps`.                                                 |
-| Plan validé (`ExitPlanMode`)  | Dans le même cas, il ajoute au résultat une consigne que seul Claude lit : déclarer une étape par étape du plan, puis tenir la liste à jour. |
+| Plan validé (`ExitPlanMode`)  | Dans le même cas, il ajoute après le résultat une consigne que seul Claude lit : déclarer une étape par étape du plan, puis tenir la liste à jour. |
 | Appel de l'outil              | Il remplace la liste des étapes et répond à Claude où en est la jauge.                                                                       |
 
 L'outil prend la liste entière à chaque appel :
@@ -93,11 +93,20 @@ du mod) ne modifient plus la jauge : c'est le plan qui fait foi, et l'outil du m
 Sans registre ni case cochée, les tâches du document ne sont qu'un aperçu, que les tâches de la
 session remplacent en gardant le titre.
 
+Dans l'autre sens, quand les étapes de la session sont en cours (il en reste à faire), une simple
+**lecture** du document ne change rien à la jauge : lire un plan pour s'informer n'est pas
+l'exécuter. Seule une écriture ou une modification du document compte alors. Elle lui donne la
+jauge si le plan tient un registre ou a des cases cochées ; sinon, le document ne fait que nommer
+le plan en cours.
+
 Une tâche vue terminée le reste, même quand l'exécuteur supprime le registre à la fin du plan.
 
 ## Quand un plan en remplace un autre
 
-- Une tâche créée alors que toutes les étapes sont terminées ouvre un **nouveau plan**, sans l'ancien titre.
+- Une tâche créée, ou une liste neuve déclarée, alors que toutes les étapes sont terminées ouvre un
+  **nouveau plan**, sans l'ancien titre.
+- Une liste qui reprend toutes les étapes du plan terminé et en ajoute d'autres le **prolonge** : il
+  garde son titre.
 - Un plan validé alors que le précédent est terminé repart d'une liste vide.
 - Tant qu'il reste une étape à faire, les nouvelles tâches s'ajoutent au plan en cours.
 - Un plan validé en mode plan met fin au suivi d'un plan Superpowers.

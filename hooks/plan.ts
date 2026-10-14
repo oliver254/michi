@@ -66,7 +66,8 @@ function leavePreview(plan: Plan): Plan {
 
 /**
  * TodoWrite : la liste entière est remplacée.
- * Une liste neuve écrite sur un plan terminé ouvre un nouveau plan, qui ne garde pas l'ancien titre.
+ * Une liste neuve écrite sur un plan terminé ouvre un nouveau plan, qui ne garde pas l'ancien titre ;
+ * une liste qui reprend toutes ses étapes et en ajoute d'autres le prolonge.
  */
 export function replaceTasks(plan: Plan, tasks: readonly Task[]): Plan {
   if (isHeldByDocument(plan)) {
@@ -85,7 +86,10 @@ export function replaceTasks(plan: Plan, tasks: readonly Task[]): Plan {
     activeForm: task.activeForm ? clean(task.activeForm) : null,
     status: task.status,
   }))
-  const isNew = isFinished(base) && !steps.every(step => step.status === 'completed')
+  const continues = base.steps.every(old =>
+    steps.some(step => normalize(step.subject) === normalize(old.subject)),
+  )
+  const isNew = isFinished(base) && !continues && !steps.every(step => step.status === 'completed')
 
   return { title: isNew ? null : base.title, steps, document: null }
 }
@@ -254,6 +258,9 @@ export type PlanDocument = { title: string; tasks: DocumentTask[] }
 /** Ce qu'on retient d'un registre : les tâches closes, et celles dont il parle sans les clore. */
 export type Ledger = { closed: string[]; mentioned: string[] }
 
+/** Ce que la session vient de faire du document d'un plan : le lire (Read), ou l'écrire (Write, Edit). */
+export type Access = 'read' | 'write'
+
 /** Chemin du document d'un plan, à l'emplacement par défaut de Superpowers : racine du dépôt, nom du plan. */
 const PLAN_PATH = /^(.*)[\\/]docs[\\/]superpowers[\\/]plans[\\/]([^\\/]+)\.md$/i
 
@@ -379,13 +386,23 @@ export function parseLedger(text: string | null): Ledger | null {
  * Une tâche est close quand le registre le dit ou que toutes ses cases sont cochées ; elle est en
  * cours quand le registre en parle sans la clore, ou qu'une partie de ses cases est cochée.
  * Une tâche déjà vue close le reste : l'exécuteur supprime le registre une fois le plan terminé.
+ *
+ * Pendant un plan de session en cours, une simple lecture ne change rien : lire un document pour
+ * s'informer n'est pas en exécuter le plan.
  */
 export function trackDocument(
   plan: Plan,
   path: string,
   document: PlanDocument,
   ledger: Ledger | null,
+  access: Access,
 ): Plan {
+  const hasRunningTasks = plan.document === null && plan.steps.length > 0 && !isFinished(plan)
+
+  if (hasRunningTasks && access === 'read') {
+    return plan
+  }
+
   const previous = plan.document !== null && normalize(plan.document.path) === normalize(path) ? plan : null
   const hasLedger = ledger !== null || previous?.document?.hasLedger === true
 
@@ -407,9 +424,8 @@ export function trackDocument(
     }
   })
 
-  // Des tâches de session sont en cours et le plan Superpowers n'a encore rien consigné :
+  // Des tâches de session sont en cours et le plan Superpowers écrit n'a encore rien consigné :
   // on ne les efface pas, le document se contente de nommer le plan.
-  const hasRunningTasks = plan.document === null && plan.steps.length > 0 && !isFinished(plan)
   const hasProgress = hasLedger || steps.some(step => step.status !== 'pending')
 
   if (hasRunningTasks && !hasProgress) {
