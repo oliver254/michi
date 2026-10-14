@@ -426,6 +426,45 @@ test('plan validé puis étapes déclarées : la jauge porte le titre du plan et
   )
 })
 
+test('un plan validé alors que le précédent n’est pas terminé ne reprend pas ses étapes', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  engine.approvedPlan = '# Nouveau plan\n\n1. Autre chose'
+  await $.tool.call({ tool: 'ExitPlanMode' })
+
+  // La bande attend les étapes du nouveau plan, que Claude déclare ensuite.
+  expect((await readBand($)).line).toBeUndefined()
+
+  await declareSteps($, [{ content: 'Autre chose', status: 'in_progress' }])
+
+  expect((await readBand($)).line).toStartWith('◆ Nouveau plan · étape 1/1')
+})
+
+test('avec un outil de tâches natif, un plan validé garde les tâches déjà créées', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.nativeTools = ['Read', 'TaskCreate']
+  await createPlan($)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 0/3 · ▱▱▱ · ○ Écrire le parseur",
+  )
+})
+
+test('une liste vide efface la jauge, et Claude le lit', async ($, on) => {
+  fakeEngine(on)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+
+  const answer = await declareSteps($, [])
+
+  expect(answer.result).toBe('Jauge effacée.')
+  expect((await readBand($)).line).toBeUndefined()
+})
+
 test('ExitPlanMode accepté glisse à Claude la consigne de déclarer ses étapes', async ($, on) => {
   const engine = fakeEngine(on)
 

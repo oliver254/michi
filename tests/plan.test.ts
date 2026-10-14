@@ -8,6 +8,7 @@ import {
   approvePlan,
   composeBand,
   composeList,
+  composeReceipt,
   displayWidth,
   extractTitle,
   isPlanDocument,
@@ -108,9 +109,18 @@ describe('transitions', () => {
   })
 
   test('ExitPlanMode donne son titre au plan et efface un plan terminé', () => {
-    expect(approvePlan(planOf(['pending']), 'Nouveau')).toMatchObject({ title: 'Nouveau' })
-    expect(approvePlan(planOf(['pending']), 'Nouveau').steps).toHaveLength(1)
-    expect(approvePlan(planOf(['completed'], 'Ancien'), 'Nouveau')).toEqual({
+    expect(approvePlan(planOf(['pending']), 'Nouveau', true)).toMatchObject({ title: 'Nouveau' })
+    expect(approvePlan(planOf(['pending']), 'Nouveau', true).steps).toHaveLength(1)
+    expect(approvePlan(planOf(['completed'], 'Ancien'), 'Nouveau', true)).toEqual({
+      title: 'Nouveau',
+      document: null,
+      steps: [],
+    })
+  })
+
+  test('sans outil de tâches natif, un plan validé repart d’une liste vide, même sur un plan en cours', () => {
+    // Les étapes viennent alors de l'outil du mod, que Claude rappelle pour le nouveau plan.
+    expect(approvePlan(planOf(['completed', 'in_progress'], 'Ancien'), 'Nouveau', false)).toEqual({
       title: 'Nouveau',
       document: null,
       steps: [],
@@ -151,6 +161,8 @@ describe('outil d’étapes', () => {
       ['A'],
       [{ status: 'pending' }],
       [{ content: '   ', status: 'pending' }],
+      // Que des caractères de contrôle : la bande n'afficherait aucun libellé.
+      [{ content: '\u0001\u0002', status: 'pending' }],
       [{ content: 'A' }],
       [{ content: 'A', status: 'done' }],
       [{ content: 'A', status: 'pending', activeForm: 3 }],
@@ -161,6 +173,33 @@ describe('outil d’étapes', () => {
     for (const input of malformed) {
       expect(readSteps(input), JSON.stringify(input)).toBeNull()
     }
+  })
+
+  test('une forme active nulle ou vide compte comme absente : l’étape garde son intitulé', () => {
+    expect(
+      readSteps([
+        { content: 'A', status: 'in_progress', activeForm: null },
+        { content: 'B', status: 'pending', activeForm: ' \u0001 ' },
+      ]),
+    ).toEqual([
+      { content: 'A', status: 'in_progress' },
+      { content: 'B', status: 'pending' },
+    ])
+  })
+
+  test('la réponse dit à Claude où en est la jauge, ou pourquoi sa liste n’a rien changé', () => {
+    const blank = parsePlanDocument(BLANK_DOCUMENT)!
+    const preview = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, null, 'read')
+    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, { closed: [], mentioned: [] }, 'read')
+
+    expect(composeReceipt(planOf(['completed', 'in_progress', 'pending']))).toBe(
+      'Jauge à jour : 1/3 étapes terminées.',
+    )
+    expect(composeReceipt(EMPTY_PLAN)).toBe('Jauge effacée.')
+    expect(composeReceipt(held)).toContain('tient la jauge')
+    // Un simple aperçu n'a aucun avancement : Claude ne doit pas croire l'outil bloqué.
+    expect(composeReceipt(preview)).not.toContain('tient la jauge')
+    expect(composeReceipt(preview)).toContain('aperçu')
   })
 })
 
@@ -461,6 +500,6 @@ describe('plans Superpowers', () => {
     const blank = parsePlanDocument(BLANK_DOCUMENT)!
     const held = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, { closed: [], mentioned: [] }, 'read')
 
-    expect(approvePlan(held, 'Autre plan')).toEqual({ title: 'Autre plan', document: null, steps: [] })
+    expect(approvePlan(held, 'Autre plan', true)).toEqual({ title: 'Autre plan', document: null, steps: [] })
   })
 })

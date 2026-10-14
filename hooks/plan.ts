@@ -164,9 +164,13 @@ export function updateTask(
 /**
  * ExitPlanMode accepté : le plan prend ce titre.
  * Un plan déjà terminé, ou un plan Superpowers suivi jusque-là, cède la place au nouveau.
+ *
+ * Sans outil de tâches natif, les étapes viennent de l'outil du mod, que Claude rappelle pour le
+ * nouveau plan : celui-ci repart donc toujours d'une liste vide, plutôt que de montrer les étapes
+ * de l'ancien sous son titre.
  */
-export function approvePlan(plan: Plan, title: string | null): Plan {
-  return isFinished(plan) || plan.document !== null
+export function approvePlan(plan: Plan, title: string | null, hasNativeTasks: boolean): Plan {
+  return isFinished(plan) || plan.document !== null || !hasNativeTasks
     ? { title, steps: [], document: null }
     : { ...plan, title: title ?? plan.title }
 }
@@ -212,14 +216,19 @@ export function readSteps(input: unknown): Task[] | null {
 
     if (
       typeof content !== 'string' ||
-      content.trim() === '' ||
+      clean(content) === '' ||
       !isStatus(status) ||
-      (activeForm !== undefined && typeof activeForm !== 'string')
+      (activeForm !== undefined && activeForm !== null && typeof activeForm !== 'string')
     ) {
       return null
     }
 
-    tasks.push({ content, status, activeForm })
+    // Une forme active nulle ou vide ne dirait rien : l'étape s'affiche alors par son intitulé.
+    tasks.push(
+      typeof activeForm === 'string' && clean(activeForm) !== ''
+        ? { content, status, activeForm }
+        : { content, status },
+    )
   }
 
   return tasks
@@ -227,8 +236,13 @@ export function readSteps(input: unknown): Task[] | null {
 
 /** Ce que l'outil d'étapes répond à Claude : où en est la jauge, ou pourquoi sa liste n'a rien changé. */
 export function composeReceipt(plan: Plan): string {
-  if (plan.document !== null) {
+  if (isHeldByDocument(plan)) {
     return 'Liste ignorée : un plan Superpowers tient la jauge, avec son propre avancement.'
+  }
+
+  // Seule une liste vide laisse en place l'aperçu d'un plan Superpowers.
+  if (plan.document !== null) {
+    return "Jauge inchangée : elle montre l'aperçu d'un plan Superpowers, qu'une liste d'étapes remplacera."
   }
 
   const { total, done } = measure(plan)

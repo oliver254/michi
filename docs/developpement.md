@@ -74,7 +74,8 @@ Les tests couvrent la création du plan, le passage d'une tâche en cours puis t
 plan, l'absence de plan, le rendu de la bande et du panneau sur `terminal` et `desktop`, les appels
 refusés ou en erreur, les subagents, la troncature, la remise à zéro, le suivi d'un plan
 Superpowers (document, registre, cases cochées, lecture pendant un plan de session) et l'outil
-d'étapes (déclaration, consigne à la validation du plan, liste mal formée, plan terminé prolongé,
+d'étapes (déclaration, consigne à la validation du plan, liste mal formée ou vide, forme active
+nulle, réponse pendant un aperçu, plan terminé prolongé, plan validé par-dessus un plan en cours,
 session qui a déjà un outil de tâches).
 
 Pour vérifier que l'outil d'étapes est bien déclaré, le message `init` de la sortie suivante, émis

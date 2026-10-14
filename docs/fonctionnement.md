@@ -47,13 +47,18 @@ Le mod comble ce manque, et seulement là où il existe :
 
 L'outil prend la liste entière à chaque appel :
 
-| Champ        | Obligatoire | Valeurs                                         |
-| ------------ | :---------: | ----------------------------------------------- |
-| `content`    | oui         | L'intitulé de l'étape.                          |
-| `status`     | oui         | `pending`, `in_progress` ou `completed`.        |
-| `activeForm` | non         | Ce qui s'affiche pendant que l'étape est en cours. |
+| Champ        | Obligatoire | Valeurs                                                                                   |
+| ------------ | :---------: | ----------------------------------------------------------------------------------------- |
+| `content`    | oui         | L'intitulé de l'étape, non vide.                                                          |
+| `status`     | oui         | `pending`, `in_progress` ou `completed`.                                                  |
+| `activeForm` | non         | Ce qui s'affiche pendant que l'étape est en cours. Absente, nulle ou vide : l'intitulé. |
 
-Une liste mal formée est refusée, et Claude en lit la raison. Une liste vide efface la jauge.
+Une liste mal formée est refusée, et Claude en lit la raison. Une liste vide efface la jauge ; pendant
+le simple aperçu d'un plan Superpowers, elle le laisse en place, et la réponse le dit.
+
+L'outil figure aussi dans la liste d'outils des subagents : l'API des mods ne permet pas de le
+réserver à la session principale. Sa description le dit, et leurs appels reçoivent une réponse sans
+rien changer.
 
 Le titre est la première ligne du plan validé. La bande apparaît au premier appel de l'outil, donc
 quelques instants après la validation, et non à la validation même.
@@ -108,6 +113,8 @@ Une tâche vue terminée le reste, même quand l'exécuteur supprime le registre
 - Une liste qui reprend toutes les étapes du plan terminé et en ajoute d'autres le **prolonge** : il
   garde son titre.
 - Un plan validé alors que le précédent est terminé repart d'une liste vide.
+- Dans une session sans outil de tâches, un plan validé repart toujours d'une liste vide, même si le
+  précédent n'est pas terminé : Claude déclare ensuite les étapes du nouveau plan.
 - Tant qu'il reste une étape à faire, les nouvelles tâches s'ajoutent au plan en cours.
 - Un plan validé en mode plan met fin au suivi d'un plan Superpowers.
 

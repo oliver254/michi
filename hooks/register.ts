@@ -36,7 +36,8 @@ const STEPS_DESCRIPTION =
   "Tient à jour la jauge du plan que l'utilisateur voit au-dessus du prompt. " +
   "Passe la liste complète des étapes à chaque appel, dans l'ordre du plan, chacune avec son statut. " +
   "Appelle-le quand un plan vient d'être validé, puis chaque fois qu'une étape commence ou se termine. " +
-  'Une liste vide efface la jauge.'
+  'Une liste vide efface la jauge. ' +
+  "Réservé à la session principale : l'appel d'un subagent est ignoré."
 
 /** Le schéma des arguments de l'outil d'étapes : la forme de TodoWrite. */
 const STEPS_SCHEMA = {
@@ -67,7 +68,8 @@ const STEPS_SCHEMA = {
 
 /** La consigne glissée à Claude quand un plan est validé ; l'utilisateur ne la voit pas. */
 const STEPS_REMINDER =
-  'Le plan est validé. Avant de commencer, appelle `mcp__michi__steps` avec une étape par étape du plan ; ' +
+  'Le plan est validé. Avant de commencer, appelle `mcp__michi__steps` avec une étape par étape du plan, ' +
+  'même si tu les as déjà déclarées ; ' +
   "rappelle-le ensuite, avec la liste complète, chaque fois qu'une étape commence ou se termine. " +
   "C'est ce qui alimente la jauge que l'utilisateur voit au-dessus du prompt."
 
@@ -238,12 +240,13 @@ export const register: Register = on => {
 
     if (e.agentId === undefined && ran.deny === undefined && ran.isError !== true) {
       const title = extractTitle(ran.result?.plan)
+      const isNative = await hasNativeTasks($)
 
-      await update($, plan, current => approvePlan(current, title))
+      await update($, plan, current => approvePlan(current, title, isNative))
 
       // Le résultat de l'outil reste celui du moteur ; la consigne s'ajoute à ce que Claude lit
       // ensuite. Avec un outil de tâches natif, le moteur lui dit déjà de tenir sa liste.
-      if (!(await hasNativeTasks($))) {
+      if (!isNative) {
         return { ...ran, context: [...(ran.context ?? []), STEPS_REMINDER] }
       }
     }

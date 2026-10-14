@@ -6,7 +6,11 @@
   n'a pas encore été contrôlé visuellement dans une session réelle.
 - **Mode plan.** La jauge dépend de Claude : s'il ne suit pas la consigne, ou cesse d'appeler l'outil
   en cours de route, la bande n'apparaît pas ou n'avance plus. Le chargement de l'outil a été vérifié
-  dans une session réelle (2.1.296) ; son appel par Claude ne l'a pas encore été.
+  dans une session réelle (2.1.296), et son appel par Claude dans une session de l'app desktop ;
+  l'affichage de la bande qui en résulte n'a pas encore été observé.
+- **Subagents.** L'outil d'étapes figure aussi dans leur liste d'outils : l'API des mods ne permet pas
+  de le réserver à la session principale. Sa description le dit, et leurs appels sont ignorés, mais
+  chacun coûte un aller-retour.
 - **Tâches antérieures au mod.** Les tâches créées avant son chargement, ou reprises par `/resume`,
   lui sont inconnues : la bande reparaît à la prochaine création de tâche.
 - **Titre.** Il vient d'un plan validé en mode plan ou d'un document Superpowers ; sans cela, la
