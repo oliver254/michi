@@ -7,8 +7,9 @@ export type Status = 'pending' | 'in_progress' | 'completed'
 /** Une étape du plan. */
 export type Step = {
   /**
-   * Identifiant de la tâche : celui que TaskCreate renvoie, le rang dans la liste pour TodoWrite,
-   * ou l'identifiant de la tâche dans un plan Superpowers (`3`, `F10a`, `A2.1`).
+   * Identifiant de la tâche : celui que TaskCreate renvoie, le rang dans la liste pour TodoWrite
+   * et pour l'outil d'étapes du mod, ou l'identifiant de la tâche dans un plan Superpowers
+   * (`3`, `F10a`, `A2.1`).
    */
   id: string
   /** Intitulé de l'étape. */
@@ -33,7 +34,8 @@ export type Plan = {
   steps: Step[]
   /**
    * Le plan Superpowers suivi : les étapes sont alors ses tâches, et non celles de la session.
-   * `null` quand les étapes viennent des tâches de la session (TodoWrite, TaskCreate, TaskUpdate).
+   * `null` quand les étapes viennent des tâches de la session (TodoWrite, TaskCreate, TaskUpdate,
+   * ou l'outil d'étapes du mod).
    */
   document: TrackedDocument | null
 }

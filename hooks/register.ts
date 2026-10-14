@@ -11,11 +11,13 @@ import {
   composeBand,
   composeHeader,
   composeList,
+  composeReceipt,
   extractTitle,
   isPlanDocument,
   locateLedger,
   parseLedger,
   parsePlanDocument,
+  readSteps,
   replaceTasks,
   trackDocument,
   truncate,
@@ -25,6 +27,49 @@ import type { Tone } from './plan'
 
 /** Identifiant du panneau que la commande /michi ouvre. */
 const PANE_ID = 'michi'
+
+/** Les outils de tâches du moteur : là où la session en offre un, le mod n'ajoute pas le sien. */
+const NATIVE_TASK_TOOLS = ['TaskCreate', 'TodoWrite']
+
+/** Ce que Claude lit de l'outil d'étapes dans sa liste d'outils. */
+const STEPS_DESCRIPTION =
+  "Tient à jour la jauge du plan que l'utilisateur voit au-dessus du prompt. " +
+  "Passe la liste complète des étapes à chaque appel, dans l'ordre du plan, chacune avec son statut. " +
+  "Appelle-le quand un plan vient d'être validé, puis chaque fois qu'une étape commence ou se termine. " +
+  'Une liste vide efface la jauge.'
+
+/** Le schéma des arguments de l'outil d'étapes : la forme de TodoWrite. */
+const STEPS_SCHEMA = {
+  type: 'object',
+  properties: {
+    steps: {
+      type: 'array',
+      description: "La liste complète des étapes, dans l'ordre du plan.",
+      items: {
+        type: 'object',
+        properties: {
+          content: {
+            type: 'string',
+            description: "Intitulé court de l'étape, à l'infinitif : « Écrire les tests ».",
+          },
+          activeForm: {
+            type: 'string',
+            description: "Ce qui se fait pendant l'étape : « Écriture des tests ».",
+          },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        },
+        required: ['content', 'status'],
+      },
+    },
+  },
+  required: ['steps'],
+}
+
+/** La consigne glissée à Claude quand un plan est validé ; l'utilisateur ne la voit pas. */
+const STEPS_REMINDER =
+  'Le plan est validé. Avant de commencer, appelle `mcp__michi__steps` avec une étape par étape du plan ; ' +
+  "rappelle-le ensuite, avec la liste complète, chaque fois qu'une étape commence ou se termine. " +
+  "C'est ce qui alimente la jauge que l'utilisateur voit au-dessus du prompt."
 
 // Le plan vit dans `$.state` : il survit ainsi aux rechargements du module, ce qu'une variable ne fait pas.
 // `plugin` et `key` restent des littéraux : `claude plugin validate` les lit dans le source.
@@ -86,8 +131,15 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
+/** Vrai quand la session offre déjà à Claude un outil de tâches : c'est alors lui qui fait la jauge. */
+async function hasNativeTasks($: EngineInterface): Promise<boolean> {
+  const tools = await $.tool.list()
+
+  return tools.some(tool => NATIVE_TASK_TOOLS.includes(tool.name))
+}
+
 export const register: Register = on => {
-  // `session.start` est rejoué à chaque rechargement du module : on y déclare la commande,
+  // `session.start` est rejoué à chaque rechargement du module : on y déclare la commande et l'outil,
   // sans toucher à l'état, qui doit justement survivre au rechargement.
   on('session.start', async ($, e, next) => {
     // Le nom est écrit en littéral, ici et au hook `command.run` : `claude plugin validate`
@@ -98,6 +150,18 @@ export const register: Register = on => {
       // S'exécute tout de suite, même pendant que Claude travaille.
       immediate: true,
     })
+
+    // Sans outil de tâches dans la session, rien ne dirait au mod où en est le plan : il offre le
+    // sien, `mcp__michi__steps`. Le nom est en littéral ici et au hook `tool.call`, comme la commande.
+    if (!(await hasNativeTasks($))) {
+      await $.tool.register({
+        name: 'steps',
+        description: STEPS_DESCRIPTION,
+        inputSchema: STEPS_SCHEMA,
+        // Dans la liste d'outils dès le départ : Claude n'a pas à le chercher par ToolSearch.
+        isDeferred: false,
+      })
+    }
 
     return next(e)
   })
@@ -176,9 +240,38 @@ export const register: Register = on => {
       const title = extractTitle(ran.result?.plan)
 
       await update($, plan, current => approvePlan(current, title))
+
+      // Le résultat de l'outil reste celui du moteur ; la consigne s'ajoute à ce que Claude lit
+      // ensuite. Avec un outil de tâches natif, le moteur lui dit déjà de tenir sa liste.
+      if (!(await hasNativeTasks($))) {
+        return { ...ran, context: [...(ran.context ?? []), STEPS_REMINDER] }
+      }
     }
 
     return ran
+  })
+
+  // --- Outil d'étapes ----------------------------------------------------
+  // L'outil que le mod offre à Claude. Rien ne tourne sous ce hook : c'est lui qui répond.
+  on('tool.call', { tool: 'mcp__michi__steps' }, async ($, e) => {
+    // Un subagent n'a pas la main sur la jauge ; son appel reçoit quand même une réponse.
+    if (e.agentId !== undefined) {
+      return { result: 'Liste ignorée : seule la session principale tient la jauge.' }
+    }
+
+    const tasks = readSteps(e.steps)
+
+    if (tasks === null) {
+      return {
+        deny:
+          '`steps` doit être la liste complète des étapes, chacune avec `content` (texte non vide) ' +
+          'et `status` (pending, in_progress ou completed).',
+      }
+    }
+
+    await update($, plan, current => replaceTasks(current, tasks))
+
+    return { result: composeReceipt(await read($, plan)) }
   })
 
   // --- Plans Superpowers -------------------------------------------------

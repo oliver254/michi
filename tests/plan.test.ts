@@ -14,6 +14,7 @@ import {
   locateLedger,
   parseLedger,
   parsePlanDocument,
+  readSteps,
   replaceTasks,
   trackDocument,
   truncate,
@@ -110,6 +111,43 @@ describe('transitions', () => {
     expect(extractTitle('Simple ligne\nsuite')).toBe('Simple ligne')
     expect(extractTitle('   \n')).toBeNull()
     expect(extractTitle(null)).toBeNull()
+  })
+})
+
+describe('outil d’étapes', () => {
+  test('accepte une liste bien formée : forme active facultative, liste vide comprise', () => {
+    expect(
+      readSteps([
+        { content: 'A', status: 'in_progress', activeForm: 'Fait A' },
+        { content: 'B', status: 'pending' },
+      ]),
+    ).toEqual([
+      { content: 'A', status: 'in_progress', activeForm: 'Fait A' },
+      { content: 'B', status: 'pending' },
+    ])
+    expect(readSteps([])).toEqual([])
+  })
+
+  test('refuse ce qui n’est pas une liste d’étapes', () => {
+    const malformed: unknown[] = [
+      undefined,
+      null,
+      'Tester',
+      { content: 'A', status: 'pending' },
+      [null],
+      ['A'],
+      [{ status: 'pending' }],
+      [{ content: '   ', status: 'pending' }],
+      [{ content: 'A' }],
+      [{ content: 'A', status: 'done' }],
+      [{ content: 'A', status: 'pending', activeForm: 3 }],
+      // Une seule étape fautive suffit à refuser la liste : on ne devine pas le reste.
+      [{ content: 'A', status: 'pending' }, { content: 'B' }],
+    ]
+
+    for (const input of malformed) {
+      expect(readSteps(input), JSON.stringify(input)).toBeNull()
+    }
   })
 })
 

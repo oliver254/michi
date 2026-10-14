@@ -22,6 +22,9 @@ export type Tone = 'title' | 'muted' | 'done' | 'active'
 /** Un morceau de la bande : son texte et son rôle. */
 export type Segment = { text: string; tone: Tone }
 
+/** Une tâche telle que TodoWrite la décrit ; l'outil d'étapes du mod reprend cette forme. */
+export type Task = { content: string; status: Status; activeForm?: string }
+
 /** Nombre maximal de cases de la barre ; au-delà, les étapes sont ramenées à cette échelle. */
 const MAX_CELLS = 10
 
@@ -65,10 +68,7 @@ function leavePreview(plan: Plan): Plan {
  * TodoWrite : la liste entière est remplacée.
  * Une liste neuve écrite sur un plan terminé ouvre un nouveau plan, qui ne garde pas l'ancien titre.
  */
-export function replaceTasks(
-  plan: Plan,
-  tasks: readonly { content: string; status: Status; activeForm?: string }[],
-): Plan {
+export function replaceTasks(plan: Plan, tasks: readonly Task[]): Plan {
   if (isHeldByDocument(plan)) {
     return plan
   }
@@ -178,6 +178,58 @@ export function extractTitle(text: string | null | undefined): string | null {
   const title = clean(line.replace(/^\s*#{1,6}\s+/, '').replace(/[*`]/g, ''))
 
   return title === '' ? null : title
+}
+
+// --- Outil d'étapes ------------------------------------------------------
+// Là où la session n'a aucun outil de tâches, le mod offre le sien à Claude. Il prend la liste
+// entière des étapes à chaque appel, comme TodoWrite : `replaceTasks` en fait donc la jauge.
+
+function isStatus(value: unknown): value is Status {
+  return value === 'pending' || value === 'in_progress' || value === 'completed'
+}
+
+/**
+ * Lit la liste passée à l'outil d'étapes : les arguments d'un outil de mod arrivent sans type.
+ * Renvoie `null` dès qu'une étape n'a pas la forme attendue, plutôt que de deviner le reste.
+ */
+export function readSteps(input: unknown): Task[] | null {
+  if (!Array.isArray(input)) {
+    return null
+  }
+
+  const tasks: Task[] = []
+
+  for (const item of input) {
+    if (typeof item !== 'object' || item === null) {
+      return null
+    }
+
+    const { content, status, activeForm } = item as Record<string, unknown>
+
+    if (
+      typeof content !== 'string' ||
+      content.trim() === '' ||
+      !isStatus(status) ||
+      (activeForm !== undefined && typeof activeForm !== 'string')
+    ) {
+      return null
+    }
+
+    tasks.push({ content, status, activeForm })
+  }
+
+  return tasks
+}
+
+/** Ce que l'outil d'étapes répond à Claude : où en est la jauge, ou pourquoi sa liste n'a rien changé. */
+export function composeReceipt(plan: Plan): string {
+  if (plan.document !== null) {
+    return 'Liste ignorée : un plan Superpowers tient la jauge, avec son propre avancement.'
+  }
+
+  const { total, done } = measure(plan)
+
+  return total === 0 ? 'Jauge effacée.' : `Jauge à jour : ${done}/${total} étapes terminées.`
 }
 
 // --- Plans Superpowers ---------------------------------------------------
