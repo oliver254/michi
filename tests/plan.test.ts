@@ -8,12 +8,14 @@ import {
   approvePlan,
   composeBand,
   composeList,
+  composeReceipt,
   displayWidth,
   extractTitle,
   isPlanDocument,
   locateLedger,
   parseLedger,
   parsePlanDocument,
+  readSteps,
   replaceTasks,
   trackDocument,
   truncate,
@@ -93,10 +95,32 @@ describe('transitions', () => {
     expect(replaceTasks(plan, [])).toEqual(EMPTY_PLAN)
   })
 
+  test('une liste qui reprend un plan terminé et y ajoute une étape le prolonge, titre compris', () => {
+    const finished = planOf(['completed', 'completed'], 'Migrer l’authentification')
+    const extended = replaceTasks(finished, [
+      { content: 'Étape 1', status: 'completed' },
+      { content: 'Étape 2', status: 'completed' },
+      { content: 'Vérifier la migration', status: 'pending' },
+    ])
+    const fresh = replaceTasks(finished, [{ content: 'Autre chose', status: 'pending' }])
+
+    expect(extended.title).toBe('Migrer l’authentification')
+    expect(fresh.title).toBeNull()
+  })
+
   test('ExitPlanMode donne son titre au plan et efface un plan terminé', () => {
-    expect(approvePlan(planOf(['pending']), 'Nouveau')).toMatchObject({ title: 'Nouveau' })
-    expect(approvePlan(planOf(['pending']), 'Nouveau').steps).toHaveLength(1)
-    expect(approvePlan(planOf(['completed'], 'Ancien'), 'Nouveau')).toEqual({
+    expect(approvePlan(planOf(['pending']), 'Nouveau', true)).toMatchObject({ title: 'Nouveau' })
+    expect(approvePlan(planOf(['pending']), 'Nouveau', true).steps).toHaveLength(1)
+    expect(approvePlan(planOf(['completed'], 'Ancien'), 'Nouveau', true)).toEqual({
+      title: 'Nouveau',
+      document: null,
+      steps: [],
+    })
+  })
+
+  test('sans outil de tâches natif, un plan validé repart d’une liste vide, même sur un plan en cours', () => {
+    // Les étapes viennent alors de l'outil du mod, que Claude rappelle pour le nouveau plan.
+    expect(approvePlan(planOf(['completed', 'in_progress'], 'Ancien'), 'Nouveau', false)).toEqual({
       title: 'Nouveau',
       document: null,
       steps: [],
@@ -110,6 +134,72 @@ describe('transitions', () => {
     expect(extractTitle('Simple ligne\nsuite')).toBe('Simple ligne')
     expect(extractTitle('   \n')).toBeNull()
     expect(extractTitle(null)).toBeNull()
+  })
+})
+
+describe('outil d’étapes', () => {
+  test('accepte une liste bien formée : forme active facultative, liste vide comprise', () => {
+    expect(
+      readSteps([
+        { content: 'A', status: 'in_progress', activeForm: 'Fait A' },
+        { content: 'B', status: 'pending' },
+      ]),
+    ).toEqual([
+      { content: 'A', status: 'in_progress', activeForm: 'Fait A' },
+      { content: 'B', status: 'pending' },
+    ])
+    expect(readSteps([])).toEqual([])
+  })
+
+  test('refuse ce qui n’est pas une liste d’étapes', () => {
+    const malformed: unknown[] = [
+      undefined,
+      null,
+      'Tester',
+      { content: 'A', status: 'pending' },
+      [null],
+      ['A'],
+      [{ status: 'pending' }],
+      [{ content: '   ', status: 'pending' }],
+      // Que des caractères de contrôle : la bande n'afficherait aucun libellé.
+      [{ content: '\u0001\u0002', status: 'pending' }],
+      [{ content: 'A' }],
+      [{ content: 'A', status: 'done' }],
+      [{ content: 'A', status: 'pending', activeForm: 3 }],
+      // Une seule étape fautive suffit à refuser la liste : on ne devine pas le reste.
+      [{ content: 'A', status: 'pending' }, { content: 'B' }],
+    ]
+
+    for (const input of malformed) {
+      expect(readSteps(input), JSON.stringify(input)).toBeNull()
+    }
+  })
+
+  test('une forme active nulle ou vide compte comme absente : l’étape garde son intitulé', () => {
+    expect(
+      readSteps([
+        { content: 'A', status: 'in_progress', activeForm: null },
+        { content: 'B', status: 'pending', activeForm: ' \u0001 ' },
+      ]),
+    ).toEqual([
+      { content: 'A', status: 'in_progress' },
+      { content: 'B', status: 'pending' },
+    ])
+  })
+
+  test('la réponse dit à Claude où en est la jauge, ou pourquoi sa liste n’a rien changé', () => {
+    const blank = parsePlanDocument(BLANK_DOCUMENT)!
+    const preview = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, null, 'read')
+    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, { closed: [], mentioned: [] }, 'read')
+
+    expect(composeReceipt(planOf(['completed', 'in_progress', 'pending']))).toBe(
+      'Jauge à jour : 1/3 étapes terminées.',
+    )
+    expect(composeReceipt(EMPTY_PLAN)).toBe('Jauge effacée.')
+    expect(composeReceipt(held)).toContain('tient la jauge')
+    // Un simple aperçu n'a aucun avancement : Claude ne doit pas croire l'outil bloqué.
+    expect(composeReceipt(preview)).not.toContain('tient la jauge')
+    expect(composeReceipt(preview)).toContain('aperçu')
   })
 })
 
@@ -312,7 +402,7 @@ describe('plans Superpowers', () => {
 
   test('sans registre, la jauge vient des cases du document', () => {
     const document = parsePlanDocument(DOCUMENT)!
-    const plan = trackDocument(EMPTY_PLAN, PLAN_PATH, document, null)
+    const plan = trackDocument(EMPTY_PLAN, PLAN_PATH, document, null, 'read')
 
     expect(plan.title).toBe('T3 — Favoris, filtres')
     expect(plan.document).toEqual({ path: PLAN_PATH, hasLedger: false })
@@ -325,7 +415,7 @@ describe('plans Superpowers', () => {
 
   test('avec un registre, une tâche close ou citée avance même sans case cochée', () => {
     const document = parsePlanDocument(DOCUMENT)!
-    const plan = trackDocument(EMPTY_PLAN, PLAN_PATH, document, parseLedger(LEDGER))
+    const plan = trackDocument(EMPTY_PLAN, PLAN_PATH, document, parseLedger(LEDGER), 'read')
 
     expect(plan.document?.hasLedger).toBe(true)
     expect(plan.steps.map(step => step.status)).toEqual(['completed', 'completed', 'in_progress'])
@@ -336,8 +426,8 @@ describe('plans Superpowers', () => {
 
   test('une tâche vue close le reste quand le registre disparaît en fin de plan', () => {
     const document = parsePlanDocument(DOCUMENT)!
-    const withLedger = trackDocument(EMPTY_PLAN, PLAN_PATH, document, parseLedger(LEDGER))
-    const withoutLedger = trackDocument(withLedger, PLAN_PATH.replace(/\\/g, '/'), document, null)
+    const withLedger = trackDocument(EMPTY_PLAN, PLAN_PATH, document, parseLedger(LEDGER), 'read')
+    const withoutLedger = trackDocument(withLedger, PLAN_PATH.replace(/\\/g, '/'), document, null, 'read')
 
     expect(withoutLedger.steps.map(step => step.status)).toEqual([
       'completed',
@@ -350,21 +440,34 @@ describe('plans Superpowers', () => {
   test('des tâches de session en cours ne sont pas effacées par un plan qui n’a rien consigné', () => {
     const blank = parsePlanDocument(BLANK_DOCUMENT)!
     const session = planOf(['completed', 'in_progress'])
+    const ledger = { closed: [], mentioned: [] }
 
-    // Rien de consigné : le document ne fait que nommer le plan.
-    expect(trackDocument(session, PLAN_PATH, blank, null)).toEqual({ ...session, title: 'Refonte' })
+    // Rien de consigné : le document écrit ne fait que nommer le plan.
+    expect(trackDocument(session, PLAN_PATH, blank, null, 'write')).toEqual({ ...session, title: 'Refonte' })
     // Un registre existe : c'est le plan Superpowers qui fait foi.
-    expect(trackDocument(session, PLAN_PATH, blank, { closed: [], mentioned: [] }).document).toEqual({
+    expect(trackDocument(session, PLAN_PATH, blank, ledger, 'write').document).toEqual({
       path: PLAN_PATH,
       hasLedger: true,
     })
   })
 
+  test('lire le document d’un plan ne touche pas à un plan de session en cours, registre ou pas', () => {
+    const blank = parsePlanDocument(BLANK_DOCUMENT)!
+    const session = planOf(['completed', 'in_progress'], 'Migrer l’authentification')
+    // Un registre laissé par une exécution abandonnée : il dit la tâche 1 close.
+    const stale = { closed: ['1'], mentioned: [] }
+
+    expect(trackDocument(session, PLAN_PATH, blank, stale, 'read')).toBe(session)
+    expect(trackDocument(session, PLAN_PATH, blank, null, 'read')).toBe(session)
+    // Le plan de session terminé, la lecture du document en fait de nouveau la jauge.
+    expect(
+      trackDocument(planOf(['completed'], 'Fini'), PLAN_PATH, blank, stale, 'read').document,
+    ).toEqual({ path: PLAN_PATH, hasLedger: true })
+  })
+
   test('le registre relu ne fait qu’avancer la jauge, et ne change rien s’il n’a pas bougé', () => {
-    const start = trackDocument(EMPTY_PLAN, PLAN_PATH, parsePlanDocument(BLANK_DOCUMENT)!, {
-      closed: [],
-      mentioned: [],
-    })
+    const blank = parsePlanDocument(BLANK_DOCUMENT)!
+    const start = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, { closed: [], mentioned: [] }, 'read')
     const advanced = applyLedger(start, { closed: ['1'], mentioned: ['2'] })
 
     expect(advanced.steps.map(step => step.status)).toEqual(['completed', 'in_progress'])
@@ -378,8 +481,8 @@ describe('plans Superpowers', () => {
 
   test('les tâches de la session remplacent un simple aperçu, pas un plan qui tient son registre', () => {
     const document = parsePlanDocument(BLANK_DOCUMENT)!
-    const preview = trackDocument(EMPTY_PLAN, PLAN_PATH, document, null)
-    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, document, { closed: [], mentioned: [] })
+    const preview = trackDocument(EMPTY_PLAN, PLAN_PATH, document, null, 'read')
+    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, document, { closed: [], mentioned: [] }, 'read')
 
     expect(addTask(preview, { id: '7', subject: 'Tâche de session' })).toEqual({
       title: 'Refonte',
@@ -394,11 +497,9 @@ describe('plans Superpowers', () => {
   })
 
   test('un plan validé en mode plan met fin au suivi du plan Superpowers', () => {
-    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, parsePlanDocument(BLANK_DOCUMENT)!, {
-      closed: [],
-      mentioned: [],
-    })
+    const blank = parsePlanDocument(BLANK_DOCUMENT)!
+    const held = trackDocument(EMPTY_PLAN, PLAN_PATH, blank, { closed: [], mentioned: [] }, 'read')
 
-    expect(approvePlan(held, 'Autre plan')).toEqual({ title: 'Autre plan', document: null, steps: [] })
+    expect(approvePlan(held, 'Autre plan', true)).toEqual({ title: 'Autre plan', document: null, steps: [] })
   })
 })

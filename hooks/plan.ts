@@ -22,6 +22,9 @@ export type Tone = 'title' | 'muted' | 'done' | 'active'
 /** Un morceau de la bande : son texte et son rôle. */
 export type Segment = { text: string; tone: Tone }
 
+/** Une tâche telle que TodoWrite la décrit ; l'outil d'étapes du mod reprend cette forme. */
+export type Task = { content: string; status: Status; activeForm?: string }
+
 /** Nombre maximal de cases de la barre ; au-delà, les étapes sont ramenées à cette échelle. */
 const MAX_CELLS = 10
 
@@ -63,12 +66,10 @@ function leavePreview(plan: Plan): Plan {
 
 /**
  * TodoWrite : la liste entière est remplacée.
- * Une liste neuve écrite sur un plan terminé ouvre un nouveau plan, qui ne garde pas l'ancien titre.
+ * Une liste neuve écrite sur un plan terminé ouvre un nouveau plan, qui ne garde pas l'ancien titre ;
+ * une liste qui reprend toutes ses étapes et en ajoute d'autres le prolonge.
  */
-export function replaceTasks(
-  plan: Plan,
-  tasks: readonly { content: string; status: Status; activeForm?: string }[],
-): Plan {
+export function replaceTasks(plan: Plan, tasks: readonly Task[]): Plan {
   if (isHeldByDocument(plan)) {
     return plan
   }
@@ -85,7 +86,10 @@ export function replaceTasks(
     activeForm: task.activeForm ? clean(task.activeForm) : null,
     status: task.status,
   }))
-  const isNew = isFinished(base) && !steps.every(step => step.status === 'completed')
+  const continues = base.steps.every(old =>
+    steps.some(step => normalize(step.subject) === normalize(old.subject)),
+  )
+  const isNew = isFinished(base) && !continues && !steps.every(step => step.status === 'completed')
 
   return { title: isNew ? null : base.title, steps, document: null }
 }
@@ -160,9 +164,13 @@ export function updateTask(
 /**
  * ExitPlanMode accepté : le plan prend ce titre.
  * Un plan déjà terminé, ou un plan Superpowers suivi jusque-là, cède la place au nouveau.
+ *
+ * Sans outil de tâches natif, les étapes viennent de l'outil du mod, que Claude rappelle pour le
+ * nouveau plan : celui-ci repart donc toujours d'une liste vide, plutôt que de montrer les étapes
+ * de l'ancien sous son titre.
  */
-export function approvePlan(plan: Plan, title: string | null): Plan {
-  return isFinished(plan) || plan.document !== null
+export function approvePlan(plan: Plan, title: string | null, hasNativeTasks: boolean): Plan {
+  return isFinished(plan) || plan.document !== null || !hasNativeTasks
     ? { title, steps: [], document: null }
     : { ...plan, title: title ?? plan.title }
 }
@@ -178,6 +186,68 @@ export function extractTitle(text: string | null | undefined): string | null {
   const title = clean(line.replace(/^\s*#{1,6}\s+/, '').replace(/[*`]/g, ''))
 
   return title === '' ? null : title
+}
+
+// --- Outil d'étapes ------------------------------------------------------
+// Là où la session n'a aucun outil de tâches, le mod offre le sien à Claude. Il prend la liste
+// entière des étapes à chaque appel, comme TodoWrite : `replaceTasks` en fait donc la jauge.
+
+function isStatus(value: unknown): value is Status {
+  return value === 'pending' || value === 'in_progress' || value === 'completed'
+}
+
+/**
+ * Lit la liste passée à l'outil d'étapes : les arguments d'un outil de mod arrivent sans type.
+ * Renvoie `null` dès qu'une étape n'a pas la forme attendue, plutôt que de deviner le reste.
+ */
+export function readSteps(input: unknown): Task[] | null {
+  if (!Array.isArray(input)) {
+    return null
+  }
+
+  const tasks: Task[] = []
+
+  for (const item of input) {
+    if (typeof item !== 'object' || item === null) {
+      return null
+    }
+
+    const { content, status, activeForm } = item as Record<string, unknown>
+
+    if (
+      typeof content !== 'string' ||
+      clean(content) === '' ||
+      !isStatus(status) ||
+      (activeForm !== undefined && activeForm !== null && typeof activeForm !== 'string')
+    ) {
+      return null
+    }
+
+    // Une forme active nulle ou vide ne dirait rien : l'étape s'affiche alors par son intitulé.
+    tasks.push(
+      typeof activeForm === 'string' && clean(activeForm) !== ''
+        ? { content, status, activeForm }
+        : { content, status },
+    )
+  }
+
+  return tasks
+}
+
+/** Ce que l'outil d'étapes répond à Claude : où en est la jauge, ou pourquoi sa liste n'a rien changé. */
+export function composeReceipt(plan: Plan): string {
+  if (isHeldByDocument(plan)) {
+    return 'Liste ignorée : un plan Superpowers tient la jauge, avec son propre avancement.'
+  }
+
+  // Seule une liste vide laisse en place l'aperçu d'un plan Superpowers.
+  if (plan.document !== null) {
+    return "Jauge inchangée : elle montre l'aperçu d'un plan Superpowers, qu'une liste d'étapes remplacera."
+  }
+
+  const { total, done } = measure(plan)
+
+  return total === 0 ? 'Jauge effacée.' : `Jauge à jour : ${done}/${total} étapes terminées.`
 }
 
 // --- Plans Superpowers ---------------------------------------------------
@@ -201,6 +271,9 @@ export type PlanDocument = { title: string; tasks: DocumentTask[] }
 
 /** Ce qu'on retient d'un registre : les tâches closes, et celles dont il parle sans les clore. */
 export type Ledger = { closed: string[]; mentioned: string[] }
+
+/** Ce que la session vient de faire du document d'un plan : le lire (Read), ou l'écrire (Write, Edit). */
+export type Access = 'read' | 'write'
 
 /** Chemin du document d'un plan, à l'emplacement par défaut de Superpowers : racine du dépôt, nom du plan. */
 const PLAN_PATH = /^(.*)[\\/]docs[\\/]superpowers[\\/]plans[\\/]([^\\/]+)\.md$/i
@@ -327,13 +400,23 @@ export function parseLedger(text: string | null): Ledger | null {
  * Une tâche est close quand le registre le dit ou que toutes ses cases sont cochées ; elle est en
  * cours quand le registre en parle sans la clore, ou qu'une partie de ses cases est cochée.
  * Une tâche déjà vue close le reste : l'exécuteur supprime le registre une fois le plan terminé.
+ *
+ * Pendant un plan de session en cours, une simple lecture ne change rien : lire un document pour
+ * s'informer n'est pas en exécuter le plan.
  */
 export function trackDocument(
   plan: Plan,
   path: string,
   document: PlanDocument,
   ledger: Ledger | null,
+  access: Access,
 ): Plan {
+  const hasRunningTasks = plan.document === null && plan.steps.length > 0 && !isFinished(plan)
+
+  if (hasRunningTasks && access === 'read') {
+    return plan
+  }
+
   const previous = plan.document !== null && normalize(plan.document.path) === normalize(path) ? plan : null
   const hasLedger = ledger !== null || previous?.document?.hasLedger === true
 
@@ -355,9 +438,8 @@ export function trackDocument(
     }
   })
 
-  // Des tâches de session sont en cours et le plan Superpowers n'a encore rien consigné :
+  // Des tâches de session sont en cours et le plan Superpowers écrit n'a encore rien consigné :
   // on ne les efface pas, le document se contente de nommer le plan.
-  const hasRunningTasks = plan.document === null && plan.steps.length > 0 && !isFinished(plan)
   const hasProgress = hasLedger || steps.some(step => step.status !== 'pending')
 
   if (hasRunningTasks && !hasProgress) {

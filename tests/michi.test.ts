@@ -73,6 +73,12 @@ function fakeEngine(on: On) {
     files: new Map<string, string>(),
     /** Les chemins que le mod a demandé à lire. */
     reads: [] as string[],
+    /** Les outils que la session offre déjà au modèle, par leur nom. */
+    nativeTools: ['Read', 'Edit', 'Bash'],
+    /** Les outils que le mod a déclarés. */
+    tools: [] as unknown[],
+    /** Ce qu'un autre mod, plus bas, a déjà glissé à Claude après ExitPlanMode. */
+    planContext: undefined as string[] | undefined,
   }
   let lastId = 0
 
@@ -83,6 +89,11 @@ function fakeEngine(on: On) {
 
     if (engine.fails) {
       return { isError: true, result: 'simulated failure', text: 'simulated failure' }
+    }
+
+    // L'outil d'un mod n'a rien sous lui : si son hook ne répond pas, l'appel échoue.
+    if (e.tool.startsWith('mcp__michi__')) {
+      return { isError: true, result: 'no hook answered', text: 'no hook answered' }
     }
 
     // Les résultats ont la forme que les types de cette version donnent à chaque outil.
@@ -103,10 +114,18 @@ function fakeEngine(on: On) {
     }
 
     if (e.tool === 'ExitPlanMode') {
-      return { result: { plan: engine.approvedPlan, isAgent: false } }
+      return { result: { plan: engine.approvedPlan, isAgent: false }, context: engine.planContext }
     }
 
     return { result: 'ok' }
+  })
+  on('tool.list', () => ({
+    value: engine.nativeTools.map(name => ({ name, description: name, mcp: false })),
+  }))
+  on('tool.register', (_$, e) => {
+    engine.tools.push(e)
+
+    return { value: { tool: `mcp__michi__${e.name}` } }
   })
   on('fs.read', (_$, e) => {
     // Le chemin arrive absolu, écrit à la façon du système : on compare sa fin.
@@ -342,6 +361,163 @@ test('une enquête garde la bande pour elle', async ($, on) => {
   expect(await readBand($, { hasSurvey: true })).toEqual({ line: undefined, hasEngineDrawing: true })
 })
 
+// --- Outil d'étapes ------------------------------------------------------
+
+/** La liste que Claude passe à l'outil d'étapes du mod : la même forme que TodoWrite. */
+const STEPS = [
+  { content: 'Lire le code', status: 'completed', activeForm: 'Lecture du code' },
+  { content: 'Corriger le bug', status: 'in_progress', activeForm: 'Correction du bug' },
+  { content: 'Tester', status: 'pending', activeForm: 'Exécution des tests' },
+  { content: 'Livrer', status: 'pending' },
+]
+
+/** Démarre la session, comme Claude Code à l'ouverture et à chaque rechargement du mod. */
+function startSession($: Engine) {
+  return $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+}
+
+/** Appelle l'outil d'étapes du mod, comme Claude le ferait. */
+function declareSteps($: Engine, steps: unknown = STEPS) {
+  return $.tool.call({ tool: 'mcp__michi__steps', steps })
+}
+
+test('sans outil de tâches dans la session, le mod déclare le sien, visible d’emblée', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  await startSession($)
+
+  // `isDeferred: false` : Claude a le schéma sous les yeux, sans passer par ToolSearch.
+  expect(engine.tools).toEqual([expect.objectContaining({ name: 'steps', isDeferred: false })])
+})
+
+test('là où la session a déjà un outil de tâches, le mod n’ajoute ni outil ni consigne', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  for (const native of ['TaskCreate', 'TodoWrite']) {
+    engine.nativeTools = ['Read', native]
+    await startSession($)
+
+    expect(engine.tools, native).toEqual([])
+    expect((await $.tool.call({ tool: 'ExitPlanMode' })).context, native).toBeUndefined()
+  }
+})
+
+test('plan validé puis étapes déclarées : la jauge porte le titre du plan et avance', async ($, on) => {
+  fakeEngine(on)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+
+  const answer = await declareSteps($)
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug",
+  )
+  // Claude lit où en est la jauge : une étape terminée sur quatre.
+  expect(answer.result).toContain('1/4')
+
+  await declareSteps($, [
+    STEPS[0],
+    { ...STEPS[1], status: 'completed' },
+    { ...STEPS[2], status: 'in_progress' },
+    STEPS[3],
+  ])
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 3/4 · ▰▰▰▱ · ▶ Exécution des tests",
+  )
+})
+
+test('un plan validé alors que le précédent n’est pas terminé ne reprend pas ses étapes', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  engine.approvedPlan = '# Nouveau plan\n\n1. Autre chose'
+  await $.tool.call({ tool: 'ExitPlanMode' })
+
+  // La bande attend les étapes du nouveau plan, que Claude déclare ensuite.
+  expect((await readBand($)).line).toBeUndefined()
+
+  await declareSteps($, [{ content: 'Autre chose', status: 'in_progress' }])
+
+  expect((await readBand($)).line).toStartWith('◆ Nouveau plan · étape 1/1')
+})
+
+test('avec un outil de tâches natif, un plan validé garde les tâches déjà créées', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.nativeTools = ['Read', 'TaskCreate']
+  await createPlan($)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 0/3 · ▱▱▱ · ○ Écrire le parseur",
+  )
+})
+
+test('une liste vide efface la jauge, et Claude le lit', async ($, on) => {
+  fakeEngine(on)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+
+  const answer = await declareSteps($, [])
+
+  expect(answer.result).toBe('Jauge effacée.')
+  expect((await readBand($)).line).toBeUndefined()
+})
+
+test('ExitPlanMode accepté glisse à Claude la consigne de déclarer ses étapes', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.planContext = ['note d’un autre mod']
+
+  const answer = await $.tool.call({ tool: 'ExitPlanMode' })
+
+  // La consigne s'ajoute à ce que les mods du dessous ont déjà glissé, sans le remplacer.
+  expect(answer.context).toEqual([
+    'note d’un autre mod',
+    expect.stringContaining('mcp__michi__steps'),
+  ])
+  // Le résultat de l'outil, lui, reste celui du moteur.
+  expect(answer.result).toEqual({ plan: engine.approvedPlan, isAgent: false })
+})
+
+test('plan refusé, ou validé par un subagent : pas de consigne', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.fails = true
+  expect((await $.tool.call({ tool: 'ExitPlanMode' })).context).toBeUndefined()
+
+  engine.fails = false
+  expect(
+    (await $.tool.call({ tool: 'ExitPlanMode', agentId: 'agent-7' } as never)).context,
+  ).toBeUndefined()
+})
+
+test('une liste mal formée est refusée à Claude sans toucher à la jauge', async ($, on) => {
+  fakeEngine(on)
+  await declareSteps($)
+
+  const answer = await declareSteps($, [{ content: 'Sans statut' }])
+
+  expect(answer.deny).toContain('steps')
+  expect((await readBand($)).line).toBe('◆ Plan · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug')
+})
+
+test('l’appel d’un subagent reçoit une réponse mais ne change pas la jauge', async ($, on) => {
+  fakeEngine(on)
+  await declareSteps($)
+
+  const answer = await $.tool.call({
+    tool: 'mcp__michi__steps',
+    steps: [{ content: 'Du subagent', status: 'in_progress' }],
+    agentId: 'agent-7',
+  } as never)
+
+  expect(answer.isError).toBeUndefined()
+  expect(answer.deny).toBeUndefined()
+  expect((await readBand($)).line).toBe('◆ Plan · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug')
+})
+
 // --- Plans Superpowers ---------------------------------------------------
 
 /** Le document d'un plan Superpowers et son registre, là où Superpowers les range. */
@@ -442,6 +618,21 @@ test('les tâches de la session n’effacent pas un plan Superpowers qui tient s
   )
 })
 
+test('un plan Superpowers qui tient son registre garde la jauge, et l’outil d’étapes le dit à Claude', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, OPEN_LEDGER)
+  await readSuperpowersPlan($)
+
+  const answer = await declareSteps($)
+
+  expect(answer.result).toContain('Superpowers')
+  expect((await readBand($, { bodyColumns: 120 })).line).toBe(
+    '◆ Convertisseur de températures · étape 0/3 · ▱▱▱ · ○ Conversion Celsius vers Fahrenheit',
+  )
+})
+
 test('sans registre, les tâches de la session remplacent l’aperçu du plan et gardent son titre', async ($, on) => {
   const engine = fakeEngine(on)
 
@@ -452,6 +643,45 @@ test('sans registre, les tâches de la session remplacent l’aperçu du plan et
 
   expect((await readBand($)).line).toBe(
     '◆ Convertisseur de températures · étape 1/3 · ▰▱▱ · ▶ Écriture du parseur',
+  )
+})
+
+test('lire un plan Superpowers pendant un plan validé ne lui prend pas la jauge', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  // Un registre laissé par une exécution abandonnée.
+  engine.files.set(LEDGER_SUFFIX, `${OPEN_LEDGER}Task 1: complete (a1b2c3d)\n`)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  await readSuperpowersPlan($)
+
+  expect((await readBand($)).line).toBe(
+    "◆ Migrer l'authentification · étape 2/4 · ▰▰▱▱ · ▶ Correction du bug",
+  )
+
+  // Claude peut toujours faire avancer la jauge.
+  const answer = await declareSteps($, [
+    STEPS[0],
+    { ...STEPS[1], status: 'completed' },
+    { ...STEPS[2], status: 'in_progress' },
+    STEPS[3],
+  ])
+
+  expect(answer.result).toContain('2/4')
+})
+
+test('modifier un plan Superpowers qui tient son registre lui donne la jauge, même pendant un plan validé', async ($, on) => {
+  const engine = fakeEngine(on)
+
+  engine.files.set(PLAN_SUFFIX, SUPERPOWERS_PLAN)
+  engine.files.set(LEDGER_SUFFIX, `${OPEN_LEDGER}Task 1: complete (a1b2c3d)\n`)
+  await $.tool.call({ tool: 'ExitPlanMode' })
+  await declareSteps($)
+  await $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: 'a', new_string: 'b' })
+
+  expect((await readBand($, { bodyColumns: 120 })).line).toBe(
+    '◆ Convertisseur de températures · étape 1/3 · ▰▱▱ · ○ Conversion inverse',
   )
 })
 

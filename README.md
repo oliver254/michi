@@ -1,47 +1,62 @@
+<div align="center">
+
 # michi
 
-> Le plan en cours, toujours sous les yeux : un mod Claude Code qui affiche au-dessus du prompt
-> l'étape active, le chemin parcouru et ce que Claude est en train de faire.
+**Le plan en cours, toujours sous les yeux.**
+
+Un mod Claude Code qui affiche au-dessus du prompt l'étape active, le chemin parcouru
+et ce que Claude est en train de faire.
+
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](.claude-plugin/plugin.json)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-%E2%89%A5%202.1.287-D97757)](#prérequis)
+[![Dépendances](https://img.shields.io/badge/d%C3%A9pendances-aucune-brightgreen)](#confidentialité)
+[![Licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+
+</div>
 
 ```text
 ◆ Migrer l'authentification · étape 3/7 · ▰▰▰▱▱▱▱ · ▶ Écriture des tests
 ```
 
-|              |                                            |
-| ------------ | ------------------------------------------ |
-| Version      | 0.2.0                                      |
-| Claude Code  | 2.1.287 ou plus récent                     |
-| Surfaces     | terminal, app desktop (onglet Code)        |
-| Dépendances  | aucune                                     |
-
 ## Sommaire
 
+- [Pourquoi michi](#pourquoi-michi)
 - [Fonctionnalités](#fonctionnalités)
-- [Installation](#installation)
+- [Démarrage rapide](#démarrage-rapide)
 - [Utilisation](#utilisation)
-- [Fonctionnement](#fonctionnement)
-- [Ce que le mod touche](#ce-que-le-mod-touche)
-- [Développement](#développement)
-- [Dépannage](#dépannage)
-- [Limites connues](#limites-connues)
+- [Confidentialité](#confidentialité)
+- [Compatibilité](#compatibilité)
+- [FAQ](#faq)
+- [Documentation](#documentation)
+- [Contribuer](#contribuer)
+- [Licence](#licence)
+
+## Pourquoi michi
+
+Quand Claude mène un travail en plusieurs étapes, son plan apparaît dans la conversation, puis
+défile avec elle. Savoir où il en est demande de remonter le fil, ou de lui poser la question.
+
+michi garde la réponse sous vos yeux, sur une seule ligne au-dessus du prompt : le plan, l'étape
+en cours, la progression et l'activité du moment.
+
+- **Sans configuration.** Le mod suit les outils de tâches de Claude Code, les plans validés en mode
+  plan et les plans [Superpowers](https://github.com/obra/superpowers). Rien à saisir.
+- **Discret.** Rien ne s'affiche tant qu'il n'y a pas de plan. La ligne s'adapte à la largeur
+  disponible et laisse visible ce que dessinent les autres mods.
+- **Sobre.** Aucune dépendance, aucun fichier écrit, aucun appel réseau.
 
 ## Fonctionnalités
 
-- **Bande permanente au-dessus du prompt**, sur une seule ligne : titre du plan, numéro d'étape,
-  barre de progression, activité du moment.
-- **Commande `/michi`** : ouvre un panneau avec la liste complète des étapes. Elle répond
-  immédiatement, même pendant que Claude travaille.
-- **Suivi automatique** : le mod lit les outils de plan de Claude Code (`TodoWrite`, `TaskCreate`,
-  `TaskUpdate`, `ExitPlanMode`). Rien à saisir, rien à configurer.
-- **Plans Superpowers** : quand la session ouvre un plan écrit par
-  [Superpowers](https://github.com/obra/superpowers), la jauge devient celle de ce plan, avec ses
-  tâches et l'avancement consigné dans son registre.
-- **Discret** : rien n'est affiché tant qu'il n'y a pas de plan, la ligne s'adapte à la largeur
-  disponible, et ce que dessinent les autres mods reste visible.
-- **Fiable** : seuls comptent les appels qui ont réellement abouti, et seulement ceux de la session
-  principale. Les plans des subagents ne polluent pas l'affichage.
+| Fonctionnalité            | Ce qu'elle apporte                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Bande au-dessus du prompt | Titre du plan, numéro d'étape, barre de progression et activité du moment, sur une ligne.              |
+| Panneau `/michi`          | La liste complète des étapes, à jour en continu. La commande répond même pendant que Claude travaille. |
+| Outils de tâches          | `TodoWrite`, `TaskCreate` et `TaskUpdate` alimentent la jauge, sans rien changer à leur comportement.  |
+| Mode plan                 | Après validation d'un plan, Claude déclare ses étapes au mod et les tient à jour.                      |
+| Plans Superpowers         | La jauge suit le document du plan et l'avancement consigné dans son registre.                          |
+| Fiabilité                 | Seuls comptent les appels aboutis de la session principale : les subagents ne brouillent pas la vue.   |
 
-## Installation
+## Démarrage rapide
 
 ### Prérequis
 
@@ -51,21 +66,15 @@ Claude Code **2.1.287 ou plus récent** :
 claude --version
 ```
 
-L'app desktop embarque sa propre copie de Claude Code ; la version s'y lit avec `/status`.
+L'app desktop embarque sa propre copie de Claude Code ; sa version se lit avec `/status`.
 
-### Essayer le temps d'une session
+### Installation
 
-Depuis le dossier parent du dépôt :
+Le dépôt est sa propre marketplace, nommée `michi-local`.
 
 ```bash
-claude --plugin-dir ./michi
+git clone https://github.com/oliver254/michi.git
 ```
-
-Depuis le dépôt lui-même, c'est `claude --plugin-dir .`. Le module est rechargé à chaque sauvegarde.
-
-### Installer durablement
-
-Le dépôt est sa propre marketplace, nommée `michi-local`. Depuis le dossier parent :
 
 ```bash
 claude plugin marketplace add ./michi
@@ -75,23 +84,23 @@ claude plugin marketplace add ./michi
 claude plugin install michi@michi-local
 ```
 
-Dans une session déjà ouverte, `/reload-plugins` charge le mod. La marketplace pointe sur le dossier :
-si celui-ci est déplacé ou supprimé, le mod ne se charge plus.
+Dans une session déjà ouverte, `/reload-plugins` charge le mod. La marketplace pointe sur le dossier
+cloné : s'il est déplacé ou supprimé, le mod ne se charge plus.
 
-Pour le retirer :
+### Essayer sans installer
 
-```bash
-claude plugin uninstall michi@michi-local
-```
+Le temps d'une session, depuis le dossier parent du dépôt :
 
 ```bash
-claude plugin marketplace remove michi-local
+claude --plugin-dir ./michi
 ```
+
+Le module est rechargé à chaque sauvegarde, ce qui en fait aussi le mode de développement.
 
 ### App desktop
 
-Un mod installé depuis le terminal au niveau utilisateur se charge aussi dans l'onglet Code.
-Sans passer par le terminal, indiquer le chemin absolu du dépôt dans `~/.claude/settings.json` :
+Un mod installé depuis le terminal au niveau utilisateur se charge aussi dans l'onglet Code. Sans
+passer par le terminal, indiquer le chemin absolu du dépôt dans `~/.claude/settings.json` :
 
 ```json
 {
@@ -101,26 +110,34 @@ Sans passer par le terminal, indiquer le chemin absolu du dépôt dans `~/.claud
 }
 ```
 
+### Désinstaller
+
+```bash
+claude plugin uninstall michi@michi-local
+```
+
+```bash
+claude plugin marketplace remove michi-local
+```
+
 ## Utilisation
 
 ### Lire la bande
 
 ```text
 ◆ Migrer l'authentification · étape 3/7 · ▰▰▰▱▱▱▱ · ▶ Écriture des tests
-  └────────── titre ──────┘   └─ étape ─┘ └ barre ┘   └──── activité ────┘
+  └───────── titre ───────┘   └ étape ┘   └barre┘   └──── activité ────┘
 ```
 
-| Élément  | Signification                                                                                  |
-| -------- | ---------------------------------------------------------------------------------------------- |
-| Titre    | Première ligne du plan validé en mode plan. `Plan` tant qu'aucun plan n'a été validé.          |
-| Étape    | Étapes terminées **plus** étapes en cours, sur le total. C'est le nombre de cases pleines.     |
+| Élément  | Signification                                                                                                         |
+| -------- | --------------------------------------------------------------------------------------------------------------------- |
+| Titre    | Titre du plan validé ou du document Superpowers. `Plan` à défaut.                                                     |
+| Étape    | Étapes terminées **plus** étapes en cours, sur le total : c'est le nombre de cases pleines.                           |
 | Barre    | Une case par étape : terminée, en cours (jaune), à faire (`▱`). Au-delà de 10 étapes, la barre est ramenée à 10 cases. |
-| Activité | `▶` forme active de l'étape en cours · `○` prochaine étape quand rien n'est en cours · `✔ terminé`. |
+| Activité | `▶` l'étape en cours · `○` la prochaine, quand rien n'est en cours · `✔ terminé` à la fin du plan.                     |
 
 Quand plusieurs étapes sont menées en parallèle, la bande montre la première et compte les autres :
-`▶ Écriture des tests (+1)`.
-
-Sur une bande étroite, le libellé est coupé (`…`) pour tenir sur une ligne ; si la place manque
+`▶ Écriture des tests (+1)`. Sur une bande étroite, le libellé est coupé (`…`) ; si la place manque
 encore, la barre s'efface, puis le titre.
 
 ### Voir toutes les étapes
@@ -143,168 +160,127 @@ encore, la barre s'efface, puis le titre.
 Les étapes terminées sont estompées, l'étape en cours est en gras et en jaune. Le panneau se met à
 jour tout seul ; il se ferme avec sa croix ou `Ctrl+X` puis `X`.
 
-### Suivre un plan Superpowers
+### D'où vient le plan
 
-Rien à faire de plus : dès que la session lit, écrit ou modifie un document
-`docs/superpowers/plans/<nom>.md` (ce que font les skills `writing-plans`, `executing-plans` et
-`subagent-driven-development`), la bande et le panneau montrent ce plan.
+Le mod reconnaît trois sources, sans réglage :
+
+| Source                                                     | Ce qui fait avancer la jauge                                                          | Titre                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------ |
+| Outils de tâches (`TodoWrite`, `TaskCreate`, `TaskUpdate`) | Chaque appel abouti de la session principale.                                         | Celui du plan validé, ou `Plan` |
+| Mode plan, dans une session sans outil de tâches           | Claude déclare les étapes avec l'outil du mod, `mcp__michi__steps`, puis les met à jour. | Première ligne du plan validé  |
+| Plan [Superpowers](https://github.com/obra/superpowers)     | Le document `docs/superpowers/plans/<nom>.md` et son registre d'avancement.           | Titre du document              |
+
+Après la validation d'un plan en mode plan, la bande apparaît au premier appel de l'outil d'étapes,
+donc quelques instants plus tard. Un plan Superpowers est suivi dès que la session lit, écrit ou
+modifie son document (une simple lecture ne le substitue pas aux étapes en cours de la session) :
 
 ```text
 ◆ T3 — Favoris, filtres, fraîcheur · étape 21/50 · ▰▰▰▰▰▱▱▱▱▱ · ▶ F4 — Le filtre appliqué
 ```
 
-- Le **titre** est celui du document, sans la mention « Implementation Plan » ou « plan d'implémentation ».
-- Les **étapes** sont les tâches du plan (`### Task 3: …`, `## Task F10a : …`, `### Tâche 1 — …`).
-  Un identifiant qui n'est pas un simple numéro reste affiché devant le nom.
-- Une tâche est **terminée** quand le registre du plan le dit (`Task F4: complete`) ou que toutes ses
-  cases sont cochées ; elle est **en cours** quand le registre en parle sans la clore, ou qu'une partie
-  de ses cases est cochée.
+Le détail de chaque source, des priorités entre elles et de la durée de vie du plan est dans
+[docs/fonctionnement.md](docs/fonctionnement.md).
 
-## Fonctionnement
+## Confidentialité
 
-### Ce que le mod écoute
+| Le mod…                 | Concrètement                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Lit                     | Uniquement le document du plan Superpowers ouvert par la session, et son registre. Sans plan Superpowers, rien.   |
+| Consulte                | La liste des outils de la session, au démarrage et à chaque plan validé, pour savoir si elle a un outil de tâches. |
+| Garde                   | Le plan, dans une seule clé de l'état de session (`michi.plan`). Rien n'est écrit sur disque.                     |
+| Ajoute à ce que Claude lit | Dans une session sans outil de tâches : la description de `mcp__michi__steps`, et une consigne de trois phrases après chaque plan validé. |
+| Ne fait jamais          | Écrire un fichier, lancer un processus, appeler le réseau, interroger un modèle, modifier les arguments ou le résultat d'un outil. |
 
-| Outil          | Effet sur le plan                                                               |
-| -------------- | ------------------------------------------------------------------------------- |
-| `TodoWrite`    | Remplace toute la liste. Une liste vide efface le plan.                         |
-| `TaskCreate`   | Ajoute une étape à faire.                                                       |
-| `TaskUpdate`   | Change le statut, l'intitulé ou la forme active d'une étape ; `deleted` la retire. |
-| `ExitPlanMode` | Donne son titre au plan, une fois celui-ci accepté.                             |
-
-Chaque appel est d'abord exécuté normalement. Le mod n'en retient l'effet qu'ensuite, et seulement si :
-
-- l'appel vient de la session principale (ceux des subagents sont ignorés) ;
-- l'outil n'a été ni refusé ni mis en erreur (un plan rejeté ne change donc rien) ;
-- pour `TaskUpdate`, l'outil n'a pas répondu que la tâche est inconnue.
-
-Le mod ne modifie jamais un appel ni son résultat : Claude lit exactement ce qu'il lirait sans lui.
-
-### Plans Superpowers
-
-Un plan Superpowers ne passe pas par le mode plan : c'est un document Markdown, et son avancement
-s'écrit dans un registre, `.superpowers/sdd/<nom>/progress.md`, que l'exécuteur complète tâche après
-tâche. Le mod s'appuie sur ces deux fichiers :
-
-| Ce que fait la session principale                         | Ce que fait le mod                                         |
-| --------------------------------------------------------- | ---------------------------------------------------------- |
-| Elle lit, écrit ou modifie le document d'un plan          | Il lit le document et son registre, et en tire la jauge.   |
-| Elle lance une commande ou modifie un fichier             | Il relit le registre du plan suivi, s'il y en a un.        |
-
-Tant que le plan tient son registre, les tâches de la session (`TaskCreate`, `TodoWrite`) ne
-modifient plus la jauge : c'est le plan qui fait foi. Sans registre ni case cochée, les tâches du
-document ne sont qu'un aperçu, que les tâches de la session remplacent en gardant le titre.
-
-Une tâche vue terminée le reste, même quand l'exécuteur supprime le registre à la fin du plan.
-
-### Quand un plan en remplace un autre
-
-- Une tâche créée alors que toutes les étapes sont terminées ouvre un **nouveau plan**, sans l'ancien titre.
-- Un plan validé alors que le précédent est terminé repart d'une liste vide.
-- Tant qu'il reste une étape à faire, les nouvelles tâches s'ajoutent au plan en cours.
-
-### Durée de vie de l'état
-
-Le plan est gardé dans l'état de session de Claude Code (`$.state`) :
-
-| Événement                        | Le plan…                |
-| -------------------------------- | ----------------------- |
-| Rechargement du mod              | est conservé            |
-| Compaction de la conversation    | est conservé            |
-| `/clear`, `/resume`, `/branch`   | repart de zéro          |
-| Fin de la session                | disparaît               |
-
-## Ce que le mod touche
-
-Le mod n'appelle que cinq fonctions de l'API des mods : `$.command.register`, `$.state`
-(lecture et écriture de sa seule clé `michi.plan`), `$.ui.open`, `$.ui.resolve` et `$.fs.read`.
-
-- **Fichiers lus** : uniquement le document du plan Superpowers que la session vient d'ouvrir, et son
-  registre. Sans plan Superpowers, aucun fichier n'est lu.
-- **Appels d'outils vus** : les quatre outils de plan, et `Read`, `Write`, `Edit` et `Bash`. De ces
-  quatre derniers, le mod ne retient rien : il regarde seulement si le fichier touché est un
-  document de plan, et s'en sert comme signal pour relire le registre.
-- **Jamais** : écrire un fichier, lancer un processus, appeler le réseau ou interroger un modèle.
-
-Vous pouvez le vérifier sans lancer le mod : les lignes `hooks:` et `calls:` de la commande
-ci-dessous listent tout ce qu'il écoute et tout ce qu'il appelle.
+Tout cela se vérifie sans lancer le mod : les lignes `hooks:` et `calls:` de la commande suivante
+listent tout ce qu'il écoute et tout ce qu'il appelle.
 
 ```bash
 claude plugin validate .
 ```
 
-## Développement
+## Compatibilité
 
-```text
-michi/
-├── .claude-plugin/
-│   ├── plugin.json         manifeste du plugin
-│   └── marketplace.json    marketplace locale (michi-local)
-├── hooks/
-│   ├── hooks.json          désigne le module de hooks
-│   ├── register.ts         hooks : capture, bande, commande, panneau
-│   └── plan.ts             logique pure : transitions, largeur, mise en forme
-├── types/
-│   └── index.d.ts          contrat de l'état ($.state)
-└── tests/
-    ├── plan.test.ts        la logique seule
-    └── michi.test.ts       le mod à travers le moteur de test
-```
+| Surface                                 | Suivi du plan | Bande et panneau |
+| --------------------------------------- | :-----------: | :--------------: |
+| Terminal                                | ✔             | ✔                |
+| App desktop (onglet Code)               | ✔             | ✔                |
+| Extension VS Code, `claude -p`, SDK     | ✔             | —                |
 
-Valider le manifeste et le module, avertissements compris :
+**Statut :** version 0.3.0, validée par ses tests automatisés avec Claude Code 2.1.296. Le rendu n'a
+pas encore été contrôlé visuellement dans une session réelle. Voir les
+[limites connues](docs/limites.md).
+
+## FAQ
+
+<details>
+<summary><b>La bande n'apparaît pas.</b></summary>
+
+Elle ne s'affiche qu'à partir de la première étape : un plan validé ne montre rien tant que Claude
+n'a pas déclaré ses étapes. S'il ne le fait pas, lui demander « déclare les étapes du plan avec
+`mcp__michi__steps` ». La bande peut aussi être repliée (`Ctrl+X` puis `Ctrl+A`), ou cédée à une
+enquête de Claude Code.
+
+</details>
+
+<details>
+<summary><b>Claude n'a pas l'outil <code>mcp__michi__steps</code>.</b></summary>
+
+Le mod le déclare au démarrage de la session : une session ouverte avant l'installation ou la mise à
+jour du mod ne l'a pas. `/reload-plugins`, ou une nouvelle session, le fait apparaître. Il est aussi
+absent, volontairement, d'une session qui a déjà `TaskCreate` ou `TodoWrite`.
+
+</details>
+
+<details>
+<summary><b>Le mod ne se charge pas.</b></summary>
+
+Vérifier la version (`claude --version`), puis la liste des mods actifs dans `/plugin`.
+`claude --debug` écrit dans le journal la raison d'un chargement refusé.
+
+</details>
+
+<details>
+<summary><b>Le plan a disparu.</b></summary>
+
+C'est attendu après `/clear`, `/resume` ou `/branch`, et à la fin de la session. Le plan survit en
+revanche au rechargement du mod et à la compaction de la conversation.
+
+</details>
+
+<details>
+<summary><b>La bande ne suit pas le plan.</b></summary>
+
+Un hook de diagnostic, à ajouter temporairement, écrit dans le transcript chaque appel d'outil de plan
+avec ses arguments et son résultat. Il est décrit dans
+[docs/developpement.md](docs/developpement.md#diagnostiquer-le-suivi).
+
+</details>
+
+## Documentation
+
+| Page                                             | Contenu                                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [Fonctionnement](docs/fonctionnement.md)         | Outils écoutés, outil d'étapes, plans Superpowers, passage d'un plan à l'autre, durée de vie. |
+| [Développement](docs/developpement.md)           | Arborescence, validation, tests, conventions, diagnostic.                                |
+| [Limites connues](docs/limites.md)               | Ce que le mod ne fait pas encore, ou pas partout.                                        |
+
+## Contribuer
+
+Avant de proposer une modification, valider le mod et lancer les tests ; les deux tournent sans
+session ni réseau :
 
 ```bash
 claude plugin validate . --strict
 ```
 
-Lancer les tests (sans session, sans réseau) :
-
 ```bash
 claude plugin test .
 ```
 
-Les tests couvrent la création du plan, le passage d'une tâche en cours puis terminée, la fin du
-plan, l'absence de plan, le rendu de la bande et du panneau sur `terminal` et `desktop`, les appels
-refusés ou en erreur, les subagents, la troncature, la remise à zéro et le suivi d'un plan
-Superpowers (document, registre, cases cochées).
+Le code n'a aucune dépendance externe. Identifiants en anglais ; commentaires, intitulés de tests et
+textes affichés en français. Tout ce qui se calcule sans le moteur vit dans `hooks/plan.ts`. Le reste
+est dans [docs/developpement.md](docs/developpement.md).
 
-Conventions du code : identifiants en anglais, commentaires et textes affichés en français ; aucune
-dépendance externe ; tout ce qui se calcule sans le moteur vit dans `hooks/plan.ts`.
+## Licence
 
-## Dépannage
-
-**Le mod ne se charge pas.** Vérifier la version (`claude --version`), puis la liste des mods actifs
-dans `/plugin`. `claude --debug` écrit dans le journal la raison d'un chargement refusé.
-
-**La bande n'apparaît pas.** Elle ne s'affiche qu'à partir de la première étape : un plan validé
-mais sans tâche ne montre rien. Elle peut aussi être repliée (`Ctrl+X` puis `Ctrl+A`), ou cédée à
-une enquête de Claude Code.
-
-**La bande ne suit pas le plan.** Ajouter temporairement ce hook dans `register` : il écrit dans le
-transcript chaque appel d'outil de plan, avec ses arguments et son résultat. À retirer ensuite.
-
-```ts
-on('tool.call', { tool: /^(TodoWrite|Task|ExitPlanMode)/ }, async ($, e, next) => {
-  const ran = await next(e)
-
-  $.ui.log(`${e.tool} ${JSON.stringify(e)} -> ${JSON.stringify(ran)}`)
-
-  return ran
-})
-```
-
-## Limites connues
-
-- **Version 0.2.0.** Le mod est validé par ses tests automatisés avec Claude Code 2.1.296 ; son rendu
-  n'a pas encore été contrôlé visuellement dans une session réelle.
-- **Tâches antérieures au mod.** Les tâches créées avant son chargement, ou reprises par `/resume`,
-  lui sont inconnues : la bande reparaît à la prochaine création de tâche.
-- **Titre.** Il vient d'un plan validé en mode plan ou d'un document Superpowers ; sans cela, la
-  bande affiche `Plan`.
-- **Plans Superpowers.** Seul l'emplacement par défaut `docs/superpowers/plans/` est reconnu. Le suivi
-  commence quand la session touche le document du plan : lire seulement le registre ne suffit pas.
-  Pendant qu'un exécutant travaille sans que le registre parle encore de sa tâche, la bande annonce
-  cette tâche avec `○` et non `▶`.
-- **Surfaces.** La bande et le panneau se dessinent dans le terminal et l'app desktop. Ailleurs
-  (extension VS Code, `claude -p`, SDK), le mod suit le plan mais n'affiche rien.
-- **Largeur des caractères.** Elle est estimée sans table Unicode complète : deux cellules pour le
-  CJK et les emoji, une pour le reste.
+Distribué sous licence [MIT](LICENSE).

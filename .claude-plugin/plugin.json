@@ -1,7 +1,8 @@
 {
   "name": "michi",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Affiche au-dessus du prompt l'avancement du plan en cours : étape active, étapes faites, activité du moment.",
   "author": { "name": "oliver254" },
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }
